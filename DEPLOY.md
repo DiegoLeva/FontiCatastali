@@ -37,6 +37,21 @@ git push -u origin main
 turso auth login
 ```
 
+### Alternativa senza CLI — Upload dal sito Turso
+
+La dialog "Upload SQLite File" accetta **solo DB con `journal_mode=WAL`**
+(altrimenti: *"Protocol error: upload works only for DBs with journal_mode=WAL"*).
+Genera un file WAL già pronto (con l'FTS dell'app inclusa):
+
+```bash
+# dalla cartella fonticatastali
+python scripts/make_turso_db.py
+# -> Database_Normalizzato/catasto_ricerca_turso.db  (WAL, FTS5 inclusa)
+```
+
+Carica `catasto_ricerca_turso.db`. NON serve poi eseguire `fts5_setup.sql`
+(è già dentro). Prendi URL + token dalla pagina del DB. Salta al punto 3.
+
 ### 2.3 Crea il DB dal file SQLite già prodotto dalla pipeline
 
 ```bash
