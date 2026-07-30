@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-zinc-50 text-zinc-900 antialiased;
+    @apply dark:bg-zinc-950 dark:text-zinc-100;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Evidenziazione della keyword nello snippet FTS5. */
+  mark {
+    @apply rounded-[3px] bg-amber-200/90 px-[3px] font-semibold text-amber-950;
+    @apply dark:bg-amber-400/25 dark:text-amber-200;
+  }
+
+  ::selection {
+    @apply bg-brand-600/20;
+  }
+}
+
+@layer utilities {
+  /* Entrata fluida del pannello cartella (espansione). */
+  @keyframes panelIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-panel-in {
+    animation: panelIn 0.18s ease-out;
+  }
+
+  /* Scrollbar sobria e coerente col tema. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(161 161 170 / 0.4) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-zinc-400/40;
+  }
+}
