@@ -31,7 +31,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label="Cambia tema chiaro/scuro"
-      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 shadow-soft transition hover:text-brand-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:text-brand-400"
+      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-canvas text-body shadow-ds transition hover:text-ink"
     >
       {/* Prima dell'idratazione (dark === null) non mostriamo nulla per
           evitare mismatch: subito dopo appare l'icona corretta. */}

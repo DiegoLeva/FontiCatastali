@@ -3,16 +3,20 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function HomePage() {
   return (
-    <main className="relative min-h-dvh px-4 pb-24 pt-8 sm:pt-14">
-      <div className="absolute right-4 top-4 sm:right-6 sm:top-6">
+    <main className="relative min-h-dvh overflow-hidden px-4 pb-24 pt-6 sm:pt-10">
+      <div className="mx-auto flex max-w-3xl items-center justify-between">
+        <span className="font-mono text-[13px] font-medium tracking-[-0.01em] text-ink">
+          FontiCatastali
+        </span>
         <ThemeToggle />
       </div>
 
-      <SearchApp />
+      <div className="mt-6 sm:mt-10">
+        <SearchApp />
+      </div>
 
-      <footer className="mx-auto mt-16 max-w-3xl text-center text-xs text-zinc-400 dark:text-zinc-600">
-        FontiCatastali · ricerca full-text su normativa catastale · Turso +
-        Next.js
+      <footer className="mx-auto mt-20 max-w-3xl border-t border-hairline pt-6 text-center font-mono text-[11px] uppercase tracking-[0.12em] text-mute">
+        Ricerca full-text · Turso + Next.js
       </footer>
     </main>
   );

@@ -89,9 +89,22 @@ turso db shell fonticatastali "SELECT count(*) FROM documenti_fts;"   # atteso: 
 
 ## 3. PDF su bucket (per aprire i file dall'app)
 
-I ~1258 PDF sono troppi per il bundle Vercel → object storage.
+I ~1258 PDF (~1 GB) sono troppi per il bundle Vercel → object storage.
 
-### Opzione A — Cloudflare R2 (consigliata, ha un tier gratuito generoso)
+### Opzione A' — Vercel Blob (più semplice, stesso ecosistema)
+
+1. Vercel → Storage → **Create** → Blob. Copia il `BLOB_READ_WRITE_TOKEN`.
+2. Carica tutto mantenendo la struttura `<Cartella>/<file>`:
+   ```powershell
+   # dalla cartella fonticatastali (PowerShell)
+   $env:BLOB_READ_WRITE_TOKEN="vercel_blob_rw_xxx"
+   node scripts/upload-blob.mjs
+   ```
+   Lo script stampa a fine upload la **BASE URL** da usare al passo 4:
+   `NEXT_PUBLIC_DOCS_BASE_URL = https://<store>.public.blob.vercel-storage.com`
+3. Nota: il piano Hobby include ~1 GB Blob; se sfori, usa R2 (opzione A).
+
+### Opzione A — Cloudflare R2 (10 GB gratis, meglio per ~1 GB)
 
 1. Crea un bucket R2 e abilita l'accesso pubblico (dominio `pub-xxx.r2.dev`).
 2. Carica la cartella mantenendo la struttura `<Cartella>/<file>.pdf`:

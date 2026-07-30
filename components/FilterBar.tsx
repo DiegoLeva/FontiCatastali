@@ -10,26 +10,26 @@ interface Props {
   onReset: () => void;
 }
 
-/**
- * Barra filtri per decennio (faceted). Multi-select: nessuna selezione = tutti.
- * Compatta e scrollabile orizzontalmente su mobile.
- */
+/** Barra filtri per decennio (faceted, multi-select). */
 export function FilterBar({ decades, active, onToggle, onReset }: Props) {
   if (decades.length <= 1) return null;
 
+  const chip = (on: boolean) =>
+    `flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-[13px] font-medium tracking-[-0.01em] transition ${
+      on
+        ? "bg-ink text-canvas"
+        : "border border-hairline bg-canvas text-body hover:border-hairline-strong hover:text-ink"
+    }`;
+
   return (
-    <div className="mb-4 flex items-center gap-2">
-      <FilterIcon className="h-4 w-4 shrink-0 text-zinc-400" />
+    <div className="mb-4 flex items-center gap-2.5">
+      <FilterIcon className="h-4 w-4 shrink-0 text-mute" />
       <div className="scrollbar-thin flex flex-1 items-center gap-2 overflow-x-auto pb-1">
         <button
           type="button"
           onClick={onReset}
           aria-pressed={active.length === 0}
-          className={`shrink-0 rounded-full px-3 py-1 text-sm font-medium transition ${
-            active.length === 0
-              ? "bg-brand-600 text-white shadow-soft"
-              : "border border-zinc-200 bg-white text-zinc-600 hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-          }`}
+          className={chip(active.length === 0).replace("gap-1.5", "")}
         >
           Tutti
         </button>
@@ -42,18 +42,12 @@ export function FilterBar({ decades, active, onToggle, onReset }: Props) {
               type="button"
               onClick={() => onToggle(d.key)}
               aria-pressed={on}
-              className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition ${
-                on
-                  ? "bg-brand-600 text-white shadow-soft"
-                  : "border border-zinc-200 bg-white text-zinc-600 hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-              }`}
+              className={chip(on)}
             >
               {d.label}
               <span
-                className={`rounded-full px-1.5 text-xs tabular-nums ${
-                  on
-                    ? "bg-white/20"
-                    : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                className={`font-mono text-[11px] tabular-nums ${
+                  on ? "text-canvas/70" : "text-mute"
                 }`}
               >
                 {d.count}

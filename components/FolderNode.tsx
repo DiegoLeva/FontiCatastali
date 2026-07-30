@@ -8,11 +8,7 @@ import { ChevronIcon, FolderIcon } from "./icons";
 
 /**
  * Livello 2 (Ramo): cartella con badge conteggio, espandibile/collassabile.
- *
- * NB: l'apertura/chiusura anima l'ALTEZZA (auto <-> 0) su un contenuto SEMPRE
- * montato (clippato quando chiuso). Evita di dipendere dall'`exit` di
- * AnimatePresence, che con React StrictMode puo' non completarsi lasciando i
- * nodi "bloccati". Cosi' l'animazione e' fluida e affidabile in dev e prod.
+ * Mount condizionale + fade-in CSS (chiusura immediata, apertura fluida).
  */
 export function FolderNode({
   group,
@@ -25,39 +21,36 @@ export function FolderNode({
   const panelId = `folder-${group.cartella.replace(/\W+/g, "-")}`;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-soft dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="overflow-hidden rounded-ds border border-hairline bg-canvas shadow-ds">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-canvas-soft"
       >
         <motion.span
           animate={{ rotate: open ? 90 : 0 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
-          className="text-zinc-400"
+          className="text-mute"
         >
           <ChevronIcon className="h-4 w-4" />
         </motion.span>
 
-        <FolderIcon className="h-5 w-5 shrink-0 text-brand-600" />
+        <FolderIcon className="h-4 w-4 shrink-0 text-ink" />
 
-        <span className="truncate font-semibold text-zinc-800 dark:text-zinc-100">
+        <span className="truncate text-[15px] font-medium tracking-[-0.01em] text-ink">
           {group.cartella}
         </span>
 
-        <span className="ml-auto shrink-0 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">
-          {group.count} {group.count === 1 ? "documento" : "documenti"}
+        <span className="ml-auto shrink-0 rounded-full border border-hairline bg-canvas-soft px-2.5 py-0.5 font-mono text-[11px] tabular-nums text-body">
+          {group.count}
         </span>
       </button>
 
-      {/* Mount condizionale + fade-in CSS: apertura fluida, chiusura immediata
-          ("snappy"), DOM leggero (solo le cartelle aperte montano i file).
-          Affidabile in dev e prod (nessun exit di AnimatePresence). */}
       {open && (
         <div id={panelId} className="animate-panel-in">
-          <div className="space-y-1 border-t border-zinc-100 p-2 dark:border-zinc-800">
+          <div className="space-y-1 border-t border-hairline p-2">
             {group.files.map((hit) => (
               <FileLeaf key={hit.id} hit={hit} />
             ))}

@@ -4,7 +4,27 @@
 
 @layer base {
   :root {
-    color-scheme: light dark;
+    --canvas: #ffffff;
+    --canvas-soft: #fafafa;
+    --canvas-soft-2: #f5f5f5;
+    --ink: #171717;
+    --body: #4d4d4d;
+    --mute: #888888;
+    --hairline: #ebebeb;
+    --hairline-strong: #a1a1a1;
+    color-scheme: light;
+  }
+
+  .dark {
+    --canvas: #111111;
+    --canvas-soft: #0a0a0a;
+    --canvas-soft-2: #1a1a1a;
+    --ink: #ededed;
+    --body: #a1a1a1;
+    --mute: #7a7a7a;
+    --hairline: #2a2a2a;
+    --hairline-strong: #454545;
+    color-scheme: dark;
   }
 
   html {
@@ -12,24 +32,34 @@
   }
 
   body {
-    @apply bg-zinc-50 text-zinc-900 antialiased;
-    @apply dark:bg-zinc-950 dark:text-zinc-100;
+    background-color: var(--canvas-soft);
+    color: var(--ink);
+    font-feature-settings: "ss01", "cv01", "cv02";
     text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Evidenziazione della keyword nello snippet FTS5. */
+  /* Evidenziazione keyword: famiglia link-blue (nessun accento extra). */
   mark {
-    @apply rounded-[3px] bg-amber-200/90 px-[3px] font-semibold text-amber-950;
-    @apply dark:bg-amber-400/25 dark:text-amber-200;
+    background-color: #d3e5ff;
+    color: #0761d1;
+    border-radius: 3px;
+    padding: 0 2px;
+    font-weight: 500;
+  }
+  .dark mark {
+    background-color: rgba(0, 112, 243, 0.22);
+    color: #9ecbff;
   }
 
   ::selection {
-    @apply bg-brand-600/20;
+    background: var(--ink);
+    color: var(--canvas);
   }
 }
 
 @layer utilities {
-  /* Entrata fluida del pannello cartella (espansione). */
+  /* Entrata pannello cartella (espansione). */
   @keyframes panelIn {
     from {
       opacity: 0;
@@ -44,16 +74,29 @@
     animation: panelIn 0.18s ease-out;
   }
 
-  /* Scrollbar sobria e coerente col tema. */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: rgb(161 161 170 / 0.4) transparent;
+    scrollbar-color: var(--hairline-strong) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-zinc-400/40;
+    background: var(--hairline-strong);
+    border-radius: 9999px;
+  }
+
+  /* Testo con riempimento a gradiente (firma Vercel, scala hero). */
+  .text-gradient {
+    background-image: linear-gradient(
+      100deg,
+      #007cf0 0%,
+      #7928ca 45%,
+      #ff0080 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef } from "react";
-import { motion } from "framer-motion";
 import { SearchIcon, SpinnerIcon, CloseIcon } from "./icons";
 
 interface Props {
@@ -24,8 +23,7 @@ export function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <motion.form
-      layout
+    <form
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
@@ -33,7 +31,7 @@ export function SearchBar({
       }}
       className="group relative w-full"
     >
-      <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 transition-colors group-focus-within:text-brand-600">
+      <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-mute transition-colors group-focus-within:text-ink">
         {loading ? (
           <SpinnerIcon className="h-5 w-5" />
         ) : (
@@ -48,13 +46,12 @@ export function SearchBar({
         autoFocus={autoFocus}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Cerca nella normativa catastale…"
+        placeholder="Cerca circolari, risoluzioni, sentenze…"
         aria-label="Cerca nella normativa catastale"
         enterKeyHint="search"
-        className="w-full rounded-2xl border border-zinc-200 bg-white py-4 pl-12 pr-12 text-base text-zinc-900 shadow-soft outline-none transition
-                   placeholder:text-zinc-400
-                   focus:border-brand-500 focus:shadow-focus
-                   dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500
+        className="h-14 w-full rounded-ds border border-hairline bg-canvas pl-12 pr-12 text-base tracking-[-0.01em] text-ink shadow-ds outline-none transition
+                   placeholder:text-mute
+                   focus:border-link focus:shadow-focus
                    [&::-webkit-search-cancel-button]:appearance-none"
       />
 
@@ -63,11 +60,11 @@ export function SearchBar({
           type="button"
           onClick={onClear}
           aria-label="Cancella ricerca"
-          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-mute transition hover:bg-canvas-soft-2 hover:text-ink"
         >
           <CloseIcon className="h-4 w-4" />
         </button>
       )}
-    </motion.form>
+    </form>
   );
 }

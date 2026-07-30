@@ -9,6 +9,7 @@ import { SearchBar } from "./SearchBar";
 import { FilterBar } from "./FilterBar";
 import { ResultsTree } from "./ResultsTree";
 import { ResultsSkeleton } from "./Skeletons";
+import { MeshGradient } from "./MeshGradient";
 import { SearchIcon } from "./icons";
 
 const MIN_CHARS = 2;
@@ -90,35 +91,43 @@ export function SearchApp() {
 
   const hasResults = !!view && view.groups.length > 0;
   const isEmpty = status === "done" && !!view && view.groups.length === 0;
+  const heroActive = status === "idle" && !data;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col">
-      {/* Header / barra: centrata quando idle, in alto quando ci sono risultati */}
-      <motion.header layout className="pt-2">
-        <motion.div
-          layout
+    <div className="relative mx-auto flex w-full max-w-3xl flex-col">
+      <MeshGradient active={heroActive} />
+
+      <header className="pt-2">
+        <div
           className={
-            status === "idle" && !data
-              ? "flex min-h-[42vh] flex-col items-center justify-center text-center"
+            heroActive
+              ? "flex min-h-[46vh] flex-col items-center justify-center text-center"
               : ""
           }
         >
-          {status === "idle" && !data && (
+          {heroActive && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-6"
+              className="mb-7"
             >
-              <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
-                Fonti<span className="text-brand-600">Catastali</span>
+              <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.16em] text-mute">
+                Motore di ricerca · Normativa catastale
+              </p>
+              <h1 className="text-[38px] font-semibold leading-[1.04] tracking-display-xl text-ink sm:text-[52px]">
+                Cerca in migliaia di
+                <br />
+                <span className="text-gradient">documenti catastali.</span>
               </h1>
-              <p className="mt-2 text-zinc-500 dark:text-zinc-400">
-                Ricerca full-text nella normativa catastale italiana.
+              <p className="mx-auto mt-4 max-w-xl text-[16px] leading-7 text-body sm:text-[17px]">
+                Ricerca full-text su circolari, risoluzioni, provvedimenti,
+                sentenze e altro — con anteprima della parola trovata e apertura
+                del documento originale.
               </p>
             </motion.div>
           )}
 
-          <div className="w-full">
+          <div className="mx-auto w-full max-w-2xl">
             <SearchBar
               value={query}
               onChange={setQuery}
@@ -133,8 +142,7 @@ export function SearchApp() {
             />
           </div>
 
-          {/* Suggerimenti iniziali */}
-          {status === "idle" && !data && (
+          {heroActive && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -144,19 +152,17 @@ export function SearchApp() {
                 <button
                   key={s}
                   onClick={() => setQuery(s)}
-                  className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 transition hover:border-brand-300 hover:text-brand-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-brand-700"
+                  className="rounded-full border border-hairline bg-canvas px-3 py-1.5 text-[13px] tracking-[-0.01em] text-body transition hover:border-hairline-strong hover:text-ink"
                 >
                   {s}
                 </button>
               ))}
             </motion.div>
           )}
-        </motion.div>
-      </motion.header>
+        </div>
+      </header>
 
-      {/* Corpo risultati — rendering condizionale diretto (niente
-          AnimatePresence mode="wait": le animazioni d'entrata vivono nei
-          singoli blocchi e in ResultsTree, evitando exit "bloccati"). */}
+      {/* Corpo risultati — rendering condizionale diretto. */}
       <div className="mt-6">
         {status === "loading" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -168,12 +174,12 @@ export function SearchApp() {
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+            className="rounded-ds border border-[#ee000033] bg-[#ee00000d] p-6 text-center text-[#c50000] dark:text-[#ff6666]"
           >
             {errorMsg}
             <button
               onClick={() => runSearch(query)}
-              className="mt-3 block w-full text-sm font-semibold underline underline-offset-4"
+              className="mt-3 block w-full text-sm font-medium underline underline-offset-4"
             >
               Riprova
             </button>
@@ -184,28 +190,31 @@ export function SearchApp() {
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 py-14 text-center dark:border-zinc-800"
+            className="flex flex-col items-center gap-3 rounded-ds border border-dashed border-hairline py-14 text-center"
           >
-            <SearchIcon className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
+            <SearchIcon className="h-8 w-8 text-mute" />
             {activeDecades.length > 0 ? (
               <>
-                <p className="text-zinc-600 dark:text-zinc-300">
+                <p className="text-body">
                   Nessun documento per i filtri selezionati.
                 </p>
                 <button
                   onClick={() => setActiveDecades([])}
-                  className="text-sm font-semibold text-brand-600 underline underline-offset-4"
+                  className="text-sm font-medium text-link underline underline-offset-4"
                 >
                   Rimuovi i filtri
                 </button>
               </>
             ) : (
               <>
-                <p className="text-zinc-600 dark:text-zinc-300">
+                <p className="text-body">
                   Nessun risultato per{" "}
-                  <span className="font-semibold">“{data?.query}”</span>.
+                  <span className="font-medium text-ink">
+                    “{data?.query}”
+                  </span>
+                  .
                 </p>
-                <p className="text-sm text-zinc-400">
+                <p className="text-sm text-mute">
                   Prova con termini più generici o controlla l&apos;ortografia.
                 </p>
               </>
