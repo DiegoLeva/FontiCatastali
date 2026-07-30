@@ -10,16 +10,10 @@ import { FilterBar } from "./FilterBar";
 import { ResultsTree } from "./ResultsTree";
 import { ResultsSkeleton } from "./Skeletons";
 import { MeshGradient } from "./MeshGradient";
+import { Logo } from "./Logo";
 import { SearchIcon } from "./icons";
 
 const MIN_CHARS = 2;
-const SUGGESTIONS = [
-  "fabbricati rurali",
-  "rendita catastale",
-  "pregeo",
-  "impianti fotovoltaici",
-  "usi civici",
-];
 
 type Status = "idle" | "loading" | "done" | "error";
 
@@ -109,21 +103,12 @@ export function SearchApp() {
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-7"
+              className="mb-8 flex flex-col items-center"
             >
-              <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.16em] text-mute">
-                Motore di ricerca · Normativa catastale
-              </p>
-              <h1 className="text-[38px] font-semibold leading-[1.04] tracking-display-xl text-ink sm:text-[52px]">
-                Cerca in migliaia di
-                <br />
-                <span className="text-gradient">documenti catastali.</span>
+              <Logo className="h-11 w-11 text-ink" />
+              <h1 className="mt-5 text-[30px] font-semibold tracking-display-lg text-ink sm:text-[38px]">
+                Cerca nel database
               </h1>
-              <p className="mx-auto mt-4 max-w-xl text-[16px] leading-7 text-body sm:text-[17px]">
-                Ricerca full-text su circolari, risoluzioni, provvedimenti,
-                sentenze e altro — con anteprima della parola trovata e apertura
-                del documento originale.
-              </p>
             </motion.div>
           )}
 
@@ -141,24 +126,6 @@ export function SearchApp() {
               autoFocus
             />
           </div>
-
-          {heroActive && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="mt-5 flex flex-wrap items-center justify-center gap-2"
-            >
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setQuery(s)}
-                  className="rounded-full border border-hairline bg-canvas px-3 py-1.5 text-[13px] tracking-[-0.01em] text-body transition hover:border-hairline-strong hover:text-ink"
-                >
-                  {s}
-                </button>
-              ))}
-            </motion.div>
-          )}
         </div>
       </header>
 
