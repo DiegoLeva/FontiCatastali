@@ -11,6 +11,8 @@ import { ResultsTree } from "./ResultsTree";
 import { ResultsSkeleton } from "./Skeletons";
 import { MeshGradient } from "./MeshGradient";
 import { Logo } from "./Logo";
+import { ExactToggle } from "./ExactToggle";
+import { BrowseTree } from "./BrowseTree";
 import { SearchIcon } from "./icons";
 
 const MIN_CHARS = 2;
@@ -23,11 +25,12 @@ export function SearchApp() {
   const [data, setData] = useState<SearchResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [activeDecades, setActiveDecades] = useState<string[]>([]);
+  const [exact, setExact] = useState(false);
 
   const debounced = useDebouncedValue(query, 250);
   const abortRef = useRef<AbortController | null>(null);
 
-  const runSearch = useCallback(async (q: string) => {
+  const runSearch = useCallback(async (q: string, exactMode: boolean) => {
     const term = q.trim();
     abortRef.current?.abort();
 
@@ -43,9 +46,10 @@ export function SearchApp() {
     setErrorMsg("");
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, {
-        signal: controller.signal,
-      });
+      const url = `/api/search?q=${encodeURIComponent(term)}${
+        exactMode ? "&exact=1" : ""
+      }`;
+      const res = await fetch(url, { signal: controller.signal });
       const json = (await res.json()) as SearchResponse;
       if (controller.signal.aborted) return;
       if (!res.ok || json.error) throw new Error(json.error || "Errore server");
@@ -58,10 +62,10 @@ export function SearchApp() {
     }
   }, []);
 
-  // Ricerca as-you-type (debounced).
+  // Ricerca as-you-type (debounced); ri-parte anche al cambio di "esatta".
   useEffect(() => {
-    runSearch(debounced);
-  }, [debounced, runSearch]);
+    runSearch(debounced, exact);
+  }, [debounced, exact, runSearch]);
 
   // Azzera i filtri ad ogni nuovo set di risultati.
   useEffect(() => {
@@ -95,7 +99,7 @@ export function SearchApp() {
         <div
           className={
             heroActive
-              ? "flex min-h-[46vh] flex-col items-center justify-center text-center"
+              ? "flex flex-col items-center pt-[5vh] text-center sm:pt-[8vh]"
               : ""
           }
         >
@@ -116,7 +120,7 @@ export function SearchApp() {
             <SearchBar
               value={query}
               onChange={setQuery}
-              onSubmit={() => runSearch(query)}
+              onSubmit={() => runSearch(query, exact)}
               onClear={() => {
                 setQuery("");
                 setData(null);
@@ -125,6 +129,7 @@ export function SearchApp() {
               loading={status === "loading"}
               autoFocus
             />
+            <ExactToggle value={exact} onChange={setExact} />
           </div>
         </div>
       </header>
@@ -145,7 +150,7 @@ export function SearchApp() {
           >
             {errorMsg}
             <button
-              onClick={() => runSearch(query)}
+              onClick={() => runSearch(query, exact)}
               className="mt-3 block w-full text-sm font-medium underline underline-offset-4"
             >
               Riprova
@@ -199,6 +204,13 @@ export function SearchApp() {
             />
             <ResultsTree data={view} />
           </>
+        )}
+
+        {/* Biblioteca: albero navigabile, mostrato quando non si sta cercando. */}
+        {heroActive && (
+          <div className="mt-10">
+            <BrowseTree />
+          </div>
         )}
       </div>
     </div>

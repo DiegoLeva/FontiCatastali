@@ -19,6 +19,30 @@ export interface FolderGroup {
   files: FileHit[];
 }
 
+/** ---- Catalogo (albero navigabile "Sfoglia") ---- */
+export interface CatalogDoc {
+  id: number;
+  titolo: string;
+  anno: string;
+  nomeFile: string;
+  url: string;
+}
+export interface CatalogYear {
+  anno: string;
+  count: number;
+  docs: CatalogDoc[];
+}
+export interface CatalogCategory {
+  cartella: string;
+  count: number;
+  anni: CatalogYear[];
+}
+export interface CatalogResponse {
+  total: number;
+  categorie: CatalogCategory[];
+  error?: string;
+}
+
 /** Faccetta di filtro per decennio. */
 export interface DecadeFacet {
   key: string; // "2010" oppure "0000"

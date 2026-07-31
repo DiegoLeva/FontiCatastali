@@ -52,3 +52,33 @@ export function snippetToSafeHtml(raw: string): string {
     .split(MARK_END)
     .join("</mark>");
 }
+
+/**
+ * RICERCA ESATTA: dato un frammento di testo e la query letterale, restituisce
+ * HTML sicuro con OGNI occorrenza esatta (case-insensitive, spazi inclusi)
+ * avvolta in <mark>. Tutto il resto e' HTML-escapato.
+ */
+export function exactSnippetHtml(window: string, query: string): string {
+  const text = window.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const q = query.trim();
+  if (!q) return escapeHtml(text);
+  const lc = text.toLowerCase();
+  const ql = q.toLowerCase();
+  let out = "";
+  let i = 0;
+  while (true) {
+    const idx = lc.indexOf(ql, i);
+    if (idx < 0) {
+      out += escapeHtml(text.slice(i));
+      break;
+    }
+    out +=
+      escapeHtml(text.slice(i, idx)) +
+      "<mark>" +
+      escapeHtml(text.slice(idx, idx + ql.length)) +
+      "</mark>";
+    i = idx + ql.length;
+  }
+  return out;
+}
