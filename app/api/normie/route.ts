@@ -69,31 +69,53 @@ function buildVectorFilter(f?: NormieFilters): VectorizeFilter | undefined {
 }
 
 /**
- * Recupera il testo dei chunk. Se il testo e' gia' nei metadati Vectorize lo
- * usa; altrimenti lo carica da D1 (store autoritativo) in un'unica query per id.
+ * Recupera testo + metadati dei chunk da D1, che e' la fonte AUTORITATIVA per
+ * nome file, titolo, cartella e anno (i metadati Vectorize servono solo alla
+ * ricerca vettoriale e ai filtri categoria/anno, che non cambiano mai con una
+ * rinomina). Cosi' rinominare i file richiede di aggiornare solo D1.
  */
+interface ChunkRow {
+  id: string;
+  doc_id: number;
+  titolo: string;
+  cartella: string;
+  nome_file: string;
+  anno: number | string;
+  testo: string;
+}
+
 async function resolveChunks(
   matches: VectorMatch[]
 ): Promise<RetrievedChunk[]> {
-  const missing = matches.filter((m) => !m.metadata?.testo);
-
-  let textById = new Map<string, string>();
-  if (missing.length > 0) {
-    const ids = missing.map((m) => m.id);
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = await d1Query<{ id: string; testo: string }>(
-      `SELECT id, testo FROM chunks WHERE id IN (${placeholders})`,
-      ids
-    );
-    textById = new Map(rows.map((r) => [String(r.id), String(r.testo ?? "")]));
-  }
+  if (matches.length === 0) return [];
+  const ids = matches.map((m) => m.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await d1Query<ChunkRow>(
+    `SELECT id, doc_id, titolo, cartella, nome_file, anno, testo
+     FROM chunks WHERE id IN (${placeholders})`,
+    ids
+  );
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
 
   return matches
-    .map((m) => ({
-      metadata: m.metadata ?? {},
-      testo: m.metadata?.testo ?? textById.get(m.id) ?? "",
-      score: m.score,
-    }))
+    .map((m) => {
+      const row = byId.get(m.id);
+      // D1 autoritativo; fallback ai metadati Vectorize se la riga manca.
+      const metadata = row
+        ? {
+            docId: Number(row.doc_id),
+            titolo: String(row.titolo ?? ""),
+            cartella: String(row.cartella ?? ""),
+            nomeFile: String(row.nome_file ?? ""),
+            anno: String(row.anno ?? ""),
+          }
+        : m.metadata ?? {};
+      return {
+        metadata,
+        testo: row?.testo ?? m.metadata?.testo ?? "",
+        score: m.score,
+      };
+    })
     .filter((c) => c.testo.trim().length > 0);
 }
 
