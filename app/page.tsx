@@ -1,6 +1,7 @@
 import { SearchApp } from "@/components/SearchApp";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Logo } from "@/components/Logo";
+import { Normie } from "@/components/Normie";
 
 export default function HomePage() {
   return (
@@ -18,6 +19,9 @@ export default function HomePage() {
       <div className="mt-6 sm:mt-10">
         <SearchApp />
       </div>
+
+      {/* Widget chatbot giuridico (floating, in basso a destra). */}
+      <Normie />
     </main>
   );
 }

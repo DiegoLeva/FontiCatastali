@@ -36,3 +36,7 @@ yarn-error.log*
 
 # DB SQLite locale di sviluppo
 /local.db
+
+# Python (script di ingest)
+__pycache__/
+*.pyc
