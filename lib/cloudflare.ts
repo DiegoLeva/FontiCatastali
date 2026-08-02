@@ -23,6 +23,9 @@ export const EMBEDDING_MODEL =
   process.env.CF_EMBEDDING_MODEL || "@cf/baai/bge-m3";
 export const LLM_MODEL =
   process.env.CF_LLM_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+// Cross-encoder per il reranking dei chunk recuperati.
+export const RERANK_MODEL =
+  process.env.CF_RERANK_MODEL || "@cf/baai/bge-reranker-base";
 
 /** Metadati salvati per ogni chunk nell'indice Vectorize. */
 export interface ChunkMetadata {
@@ -154,11 +157,11 @@ export async function d1Query<Row = Record<string, unknown>>(
  */
 export async function chat(
   messages: ChatMessage[],
-  opts: { maxTokens?: number; temperature?: number } = {}
+  opts: { maxTokens?: number; temperature?: number; model?: string } = {}
 ): Promise<string> {
   const accountId = requireEnv("CF_ACCOUNT_ID");
   const result = await cfFetch<{ response?: string }>(
-    `/accounts/${accountId}/ai/run/${LLM_MODEL}`,
+    `/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`,
     {
       messages,
       max_tokens: opts.maxTokens ?? 1024,
@@ -168,4 +171,31 @@ export async function chat(
   const text = result?.response?.trim();
   if (!text) throw new Error("Risposta vuota dal modello.");
   return text;
+}
+
+/**
+ * Rerank dei chunk rispetto alla domanda con un cross-encoder (piu' preciso
+ * della sola similarita' vettoriale). Ritorna gli indici (nel medesimo ordine
+ * dell'array `texts`) col punteggio, ordinati dal piu' pertinente.
+ */
+export async function rerank(
+  query: string,
+  texts: string[],
+  topK: number
+): Promise<Array<{ index: number; score: number }>> {
+  if (texts.length === 0) return [];
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const result = await cfFetch<{
+    response?: Array<{ id: number; score: number }>;
+  }>(`/accounts/${accountId}/ai/run/${RERANK_MODEL}`, {
+    query,
+    // il reranker tronca internamente: passiamo un estratto per pesare meno banda
+    contexts: texts.map((t) => ({ text: t.slice(0, 1200) })),
+    top_k: topK,
+  });
+  const resp = result?.response ?? [];
+  return resp
+    .filter((r) => typeof r?.id === "number")
+    .slice(0, topK)
+    .map((r) => ({ index: r.id, score: r.score }));
 }

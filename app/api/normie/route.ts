@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   embed,
   vectorSearch,
+  rerank,
   d1Query,
   chat,
   type VectorMatch,
@@ -13,6 +14,7 @@ import {
   buildSources,
   buildContext,
   buildUserMessage,
+  expandQuery,
   NO_CONTEXT_ANSWER,
   type NormieResponse,
   type RetrievedChunk,
@@ -25,8 +27,10 @@ export const dynamic = "force-dynamic";
 // sulle risposte piu' articolate. Richiede piano Vercel Pro (Hobby = max 10s).
 export const maxDuration = 60;
 
-const TOP_K = 6; // chunk recuperati da Vectorize
-const MIN_SCORE = 0.35; // soglia cosine sotto la quale il match e' rumore
+const RETRIEVE_K = 25; // candidati recuperati da Vectorize (poi rerankati)
+const RERANK_K = 8; // chunk finali passati al modello dopo il rerank
+const MIN_SCORE = 0.3; // prefiltro cosine grezzo; la selezione fine la fa il reranker
+const MAX_ANSWER_TOKENS = 2000; // risposte piu' complete (analisi step-by-step)
 const MAX_QUESTION_LEN = 2000;
 const MAX_HISTORY = 4; // ultimi turni inviati al modello per continuita'
 
@@ -153,37 +157,59 @@ export async function POST(
   }
 
   try {
-    // 1) Embedding della domanda (Cloudflare Workers AI).
-    const queryVector = await embed(question);
+    // 1) Espansione della query (C): scioglie sigle + sinonimi -> miglior recall.
+    //    Usata SOLO per l'embedding di ricerca, non per la risposta.
+    const searchQuery = expandQuery(question);
+    const queryVector = await embed(searchQuery);
 
-    // 2) Ricerca dei chunk piu' pertinenti (Cloudflare Vectorize), con
-    //    eventuale filtro per categoria/anno sui metadati.
+    // 2) Ricerca dei candidati (Cloudflare Vectorize), con eventuale filtro
+    //    categoria/anno sui metadati.
     const filter = buildVectorFilter(body.filters);
-    const matches = (await vectorSearch(queryVector, TOP_K, filter)).filter(
+    const matches = (await vectorSearch(queryVector, RETRIEVE_K, filter)).filter(
       (m) => m.score >= MIN_SCORE
     );
-
     if (matches.length === 0) {
       return NextResponse.json({ answer: NO_CONTEXT_ANSWER, sources: [] });
     }
 
-    // 3) Testo dei chunk (metadati Vectorize o fallback D1).
-    const chunks = await resolveChunks(matches);
+    // 3) Testo + metadati dei chunk da D1 (fonte autoritativa).
+    let chunks = await resolveChunks(matches);
     if (chunks.length === 0) {
       return NextResponse.json({ answer: NO_CONTEXT_ANSWER, sources: [] });
     }
 
-    // 4) Fonti autoritative (URL dal DB) + contesto etichettato per [n].
+    // 4) Rerank (A): cross-encoder sulla DOMANDA ORIGINALE -> i piu' pertinenti.
+    //    Fallback all'ordine vettoriale se il reranker non risponde.
+    try {
+      const ranked = await rerank(
+        question,
+        chunks.map((c) => c.testo),
+        RERANK_K
+      );
+      chunks =
+        ranked.length > 0
+          ? ranked
+              .map((r) => chunks[r.index])
+              .filter((c): c is RetrievedChunk => Boolean(c))
+          : chunks.slice(0, RERANK_K);
+    } catch {
+      chunks = chunks.slice(0, RERANK_K);
+    }
+
+    // 5) Fonti autoritative (URL dal DB) + contesto etichettato per [n] (con anno).
     const { sources, keyToN } = buildSources(chunks);
     const context = buildContext(chunks, keyToN);
 
-    // 5) Generazione della risposta (Cloudflare Workers AI, es. Llama-3).
+    // 6) Generazione della risposta (Cloudflare Workers AI, Llama-3.3 70B).
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
       ...sanitizeHistory(body.history),
       { role: "user", content: buildUserMessage(question, context) },
     ];
-    const answer = await chat(messages, { maxTokens: 1024, temperature: 0.2 });
+    const answer = await chat(messages, {
+      maxTokens: MAX_ANSWER_TOKENS,
+      temperature: 0.2,
+    });
 
     return NextResponse.json({ answer, sources });
   } catch (err) {

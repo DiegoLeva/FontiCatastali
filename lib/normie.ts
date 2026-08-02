@@ -3,7 +3,7 @@
  * autoritative (URL dal DB, MAI dal modello) e del System Prompt.
  */
 
-import type { VectorMatch, ChunkMetadata } from "@/lib/cloudflare";
+import type { ChunkMetadata } from "@/lib/cloudflare";
 
 const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
 
@@ -120,6 +120,11 @@ Struttura sempre l'analisi giuridica per passaggi logici, in modo progressivo:
 4. **Eventuali contrasti o dubbi**: se le fonti divergono o sono ambigue, segnalalo invece di forzare una conclusione.
 5. **Conclusione operativa**: sintetizza la risposta pratica alla domanda.
 
+## Gerarchia e recenza delle fonti
+- Ogni fonte nel CONTESTO riporta l'anno tra parentesi. Se piu' fonti trattano lo stesso punto, dai prevalenza alla piu' RECENTE: una circolare/risoluzione/nota successiva puo' superare, aggiornare o derogare la precedente.
+- Segnala esplicitamente quando una fonte piu' recente modifica o supera una precedente (es. "aggiornando quanto previsto dalla circolare del 2005 [3]").
+- Considera anche la gerarchia normativa (legge/decreto > prassi amministrativa) quando pertinente.
+
 ## Citazione delle fonti
 - Ogni affermazione basata su una fonte DEVE riportare il riferimento inline nella forma [n] (es. "la variazione va presentata entro 30 giorni [2]"), usando i numeri assegnati alle fonti nel CONTESTO.
 - Non inventare numeri di fonte: usa solo quelli presenti nel contesto. I link ai PDF vengono aggiunti automaticamente dal sistema, non scriverli tu.
@@ -139,6 +144,44 @@ ${context}
 ${question}
 
 Rispondi seguendo il metodo step-by-step e cita le fonti con [n].`;
+}
+
+/**
+ * Espansione della query (C): DETERMINISTICA via glossario catastale.
+ * Un LLM piccolo sbaglia gli acronimi di dominio (es. "Docfa" -> "Documento di
+ * Cognizione"), quindi usiamo un dizionario curato: corretto, istantaneo, gratis.
+ * Le espansioni si sommano alla domanda originale, usata SOLO per l'embedding.
+ */
+const GLOSSARIO: Array<[RegExp, string]> = [
+  [/\bdoc\.?fa\b/i, "dichiarazione di variazione Documenti Catasto Fabbricati"],
+  [/\bpregeo\b/i, "aggiornamento Catasto Terreni tipo mappale frazionamento"],
+  [/\bnceu\b/i, "Nuovo Catasto Edilizio Urbano"],
+  [/\bnct\b/i, "Nuovo Catasto Terreni"],
+  [/\bf1\b/i, "area urbana categoria fittizia"],
+  [/\bf2\b/i, "unità collabente categoria fittizia"],
+  [/\bf3\b/i, "fabbricato in corso di costruzione categoria fittizia"],
+  [/\bf4\b/i, "fabbricato in corso di definizione categoria fittizia"],
+  [/\bf5\b/i, "lastrico solare categoria fittizia"],
+  [/\bf6\b/i, "fabbricato in attesa di dichiarazione categoria fittizia"],
+  [/\bcollabent/i, "unità collabente F2 immobile diroccato inagibile"],
+  [/\bvoltura\b/i, "voltura catastale trasferimento intestazione"],
+  [/\bclassament/i, "attribuzione categoria classe rendita catastale"],
+  [/\brendit/i, "rendita catastale estimo"],
+  [/\bunit[aà]\s+immobiliar/i, "unità immobiliare urbana UIU"],
+  [/\bpunt[oi]\s+fiducial/i, "punto fiduciale PF rete geodetica"],
+  [/\btipo\s+mappale\b/i, "tipo mappale aggiornamento fabbricati Pregeo"],
+  [/\bfrazionament/i, "tipo di frazionamento Pregeo Catasto Terreni"],
+  [/\brural/i, "fabbricato rurale ruralità requisiti"],
+  [/\bsuperbonus\b/i, "detrazione fiscale 110% Superbonus"],
+  [/\b(agenzia delle entrate|ade)\b/i, "Agenzia delle Entrate"],
+];
+
+export function expandQuery(question: string): string {
+  const adds: string[] = [];
+  for (const [re, exp] of GLOSSARIO) {
+    if (re.test(question)) adds.push(exp);
+  }
+  return adds.length > 0 ? `${question} ${adds.join(" ")}` : question;
 }
 
 /** Messaggio quando la ricerca vettoriale non trova nulla di pertinente. */
