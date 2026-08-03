@@ -15,6 +15,7 @@ import {
   buildContext,
   buildUserMessage,
   expandQuery,
+  filterCitedSources,
   NO_CONTEXT_ANSWER,
   type NormieResponse,
   type RetrievedChunk,
@@ -211,7 +212,12 @@ export async function POST(
       temperature: 0.2,
     });
 
-    return NextResponse.json({ answer, sources });
+    // 7) Mostra all'utente SOLO le fonti effettivamente citate [n] nella
+    //    risposta, così l'elenco "Fonti" combacia con i riferimenti inline
+    //    (le fonti recuperate ma non citate non vengono elencate).
+    const citedSources = filterCitedSources(answer, sources);
+
+    return NextResponse.json({ answer, sources: citedSources });
   } catch (err) {
     console.error("[/api/normie] errore:", err);
     return NextResponse.json(

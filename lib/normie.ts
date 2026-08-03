@@ -78,6 +78,42 @@ export function buildSources(chunks: RetrievedChunk[]): {
 }
 
 /**
+ * Estrae dai testo della risposta i numeri di fonte effettivamente citati nella
+ * forma [n] (gestisce "[3]", "[3] e [5]", "[3], [5]", "[3][5]"). Ignora tutto
+ * cio' che non e' un intero positivo. Restituisce un insieme di numeri.
+ */
+export function extractCitedNumbers(answer: string): Set<number> {
+  const cited = new Set<number>();
+  const re = /\[(\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(answer)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isInteger(n) && n > 0) cited.add(n);
+  }
+  return cited;
+}
+
+/**
+ * Allinea le fonti mostrate nel frontend a quelle EFFETTIVAMENTE citate nel
+ * testo della risposta: tiene solo le fonti il cui numero [n] compare nella
+ * risposta, preservando la numerazione originale (cosi' i riferimenti inline
+ * [3], [5]... continuano a puntare al bottone giusto).
+ *
+ * Fallback prudente: se la risposta non contiene alcuna citazione valida
+ * (es. il modello non ha citato nulla, o ha citato solo numeri inesistenti),
+ * restituisce l'elenco completo per non nascondere del tutto le fonti.
+ */
+export function filterCitedSources(
+  answer: string,
+  sources: NormieSource[]
+): NormieSource[] {
+  const cited = extractCitedNumbers(answer);
+  if (cited.size === 0) return sources;
+  const filtered = sources.filter((s) => cited.has(s.n));
+  return filtered.length > 0 ? filtered : sources;
+}
+
+/**
  * Serializza i chunk in un blocco di contesto etichettato per fonte, cosi' il
  * modello sa a quale [n] appartiene ogni estratto e puo' citarlo con precisione.
  */
@@ -128,6 +164,8 @@ Struttura sempre l'analisi giuridica per passaggi logici, in modo progressivo:
 ## Citazione delle fonti
 - Ogni affermazione basata su una fonte DEVE riportare il riferimento inline nella forma [n] (es. "la variazione va presentata entro 30 giorni [2]"), usando i numeri assegnati alle fonti nel CONTESTO.
 - Non inventare numeri di fonte: usa solo quelli presenti nel contesto. I link ai PDF vengono aggiunti automaticamente dal sistema, non scriverli tu.
+- Quando ti riferisci a un documento, chiamalo con il TITOLO ESATTO indicato accanto al suo [n] nel CONTESTO. NON coniare nomi alternativi, numeri di circolare/risoluzione/protocollo o date diversi da quelli del titolo: se un dettaglio non e' nel titolo, non attribuirlo al documento.
+- Cita SOLO i documenti che usi davvero per la risposta. Non elencare fonti che non contribuiscono ad alcuna affermazione: l'elenco "Fonti" mostrato all'utente conterra' esattamente i [n] che scrivi nel testo.
 
 ## Stile
 - Italiano professionale, chiaro e conciso. Usa elenchi puntati e grassetto per i punti chiave.
