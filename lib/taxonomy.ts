@@ -67,7 +67,10 @@ export const TASSONOMIA: TaxNode[] = [
         n("A2.2.4", "A/11 — abitazioni tipiche dei luoghi", ["a/11", "abitazioni tipiche dei luoghi", "alloggi tipici"]),
       ]),
       n("A2.3", "Gruppo B — uso collettivo", ["gruppo b"], [
-        n("A2.3.1", "B/1–B/2 — collegi, caserme, case di cura", ["b/1", "b/2", "collegi", "caserme", "case di cura"]),
+        // I codici b/1 e b/2 nudi pescavano 107 documenti contro i 16 e 6 dei
+        // fratelli: collidevano con le numerazioni di paragrafi e allegati.
+        // Restano solo qualificati dalla parola "categoria".
+        n("A2.3.1", "B/1–B/2 — collegi, caserme, case di cura", ["categoria b/1", "categoria b/2", "collegi", "caserme", "convitti", "case di cura"]),
         n("A2.3.2", "B/4–B/5 — uffici pubblici e scuole", ["b/4", "b/5", "uffici pubblici", "scuole"]),
         n("A2.3.3", "B/6–B/8 — musei, cappelle, magazzini sotterranei", ["b/6", "b/7", "b/8", "biblioteche", "musei", "cappelle", "magazzini sotterranei"]),
       ]),
@@ -97,12 +100,12 @@ export const TASSONOMIA: TaxNode[] = [
         n("A3.1.1", "Criteri e unita di riferimento", ["criteri di determinazione della rendita", "unita di riferimento", "unita tipo"]),
         n("A3.1.2", "Rendita presunta", ["rendita presunta"]),
       ]),
-      n("A3.2", "Rendita proposta e rendita d'ufficio", ["rendita proposta"], [
-        n("A3.2.1", "Rendita proposta con DOCFA", ["rendita proposta"]),
-        n("A3.2.2", "Rettifica entro dodici mesi", ["rettifica entro dodici mesi", "termine di dodici mesi"]),
-        n("A3.2.3", "Notifica della rendita", ["notifica della rendita", "notificazione della rendita"]),
+      n("A3.2", "Rendita proposta e rendita d'ufficio", ["rendita proposta", "proposta di rendita", "rendita d'ufficio", "rendita dichiarata"], [
+        n("A3.2.1", "Rendita proposta con DOCFA", ["rendita proposta", "proposta di rendita", "rendita dichiarata"]),
+        n("A3.2.2", "Rettifica entro dodici mesi", ["rettifica entro dodici mesi", "termine di dodici mesi", "entro dodici mesi"]),
+        n("A3.2.3", "Notifica della rendita", ["notifica della rendita", "notificazione della rendita", "notifica del classamento"]),
       ]),
-      n("A3.3", "Rettifica della rendita", ["rettifica della rendita"], [
+      n("A3.3", "Rettifica della rendita", ["rettifica della rendita", "rettifica del classamento", "modifica della rendita"], [
         n("A3.3.1", "Motivazione dell'atto di classamento", ["motivazione dell'atto di classamento", "obbligo di motivazione"]),
         n("A3.3.2", "Termini e decadenza", ["termini di decadenza", "decadenza del potere"]),
       ]),
@@ -238,7 +241,7 @@ export const TASSONOMIA: TaxNode[] = [
         n("C3.1.1", "Casi di presentazione obbligatoria", ["obbligo di presentazione dell'elaborato", "casi di presentazione"]),
         n("C3.1.2", "Elenco dei subalterni", ["elenco dei subalterni", "elenco subalterni"]),
       ]),
-      n("C3.2", "Planimetria catastale e simbologia", ["planimetria catastale"], [
+      n("C3.2", "Planimetria catastale e simbologia", ["planimetria catastale", "planimetria dell'unita immobiliare", "deposito della planimetria", "planimetria depositata"], [
         n("C3.2.1", "Scala e quotature", ["scala 1:200", "quotature"]),
         n("C3.2.2", "Simbologia e altezze", ["simbologia", "altezza dei locali"]),
       ]),
@@ -254,7 +257,7 @@ export const TASSONOMIA: TaxNode[] = [
         n("C4.2.2", "Voltura 2.0", ["voltura 2.0"]),
       ]),
       n("C4.3", "Volture da successione e atti giudiziari", ["atti giudiziari"], [
-        n("C4.3.1", "Successioni", ["dichiarazione di successione", "successione"]),
+        n("C4.3.1", "Successioni", ["voltura per successione", "voltura da successione", "dichiarazione di successione"]),
         n("C4.3.2", "Sentenze e decreti di trasferimento", ["decreto di trasferimento", "sentenza"]),
         n("C4.3.3", "Usucapione", ["usucapione"]),
       ]),
@@ -276,7 +279,9 @@ export const TASSONOMIA: TaxNode[] = [
 
   // ===========================================================================
   n("D", "Pubblicita immobiliare", ["pubblicita immobiliare", "conservatoria"], [
-    n("D1", "Trascrizioni e iscrizioni", ["trascrizione", "iscrizione"], [
+    // "trascrizione" e "iscrizione" nude intercettavano 170 documenti che
+    // nessun figlio riconosceva: sono parole d'uso corrente in tutto il corpus.
+    n("D1", "Trascrizioni e iscrizioni", ["formalita ipotecaria", "registri immobiliari", "trascrizione immobiliare", "trascrizione dell'atto"], [
       n("D1.1", "Nota di trascrizione", ["nota di trascrizione"], [
         n("D1.1.1", "Compilazione e modelli", ["modello di nota", "compilazione della nota"]),
         n("D1.1.2", "Rettifica della nota", ["rettifica della nota"]),
@@ -332,10 +337,10 @@ export const TASSONOMIA: TaxNode[] = [
       n("E4.2", "Esenzioni e riduzioni", ["esenzione dai tributi", "riduzione dei tributi"]),
       n("E4.3", "Modalita di versamento", ["modalita di versamento", "f24 elide"]),
     ]),
-    n("E5", "Successioni e donazioni", ["successione", "donazione"], [
-      n("E5.1", "Dichiarazione di successione telematica", ["dichiarazione di successione telematica"]),
-      n("E5.2", "Voltura automatica da successione", ["voltura automatica da successione"]),
-      n("E5.3", "Prima casa in successione", ["agevolazione prima casa successione"]),
+    n("E5", "Successioni e donazioni", ["imposta di successione", "atto di donazione", "asse ereditario"], [
+      n("E5.1", "Dichiarazione di successione telematica", ["dichiarazione di successione telematica", "successione telematica", "dichiarazione di successione"]),
+      n("E5.2", "Voltura automatica da successione", ["voltura automatica da successione", "voltura da successione"]),
+      n("E5.3", "Prima casa in successione", ["agevolazione prima casa successione", "prima casa in successione"]),
     ]),
   ]),
 
@@ -399,15 +404,15 @@ export const TASSONOMIA: TaxNode[] = [
       n("G3.3", "Rapporto tra titolo edilizio e catasto", ["coerenza urbanistico catastale", "rapporto tra titolo edilizio e catasto"]),
     ]),
     n("G4", "Cambio di destinazione d'uso", ["destinazione d'uso"], [
-      n("G4.1", "Mutamento con e senza opere", ["mutamento di destinazione", "senza opere", "con opere"]),
-      n("G4.2", "Riflessi sul classamento", ["riflessi sul classamento", "effetti sul classamento"]),
+      n("G4.1", "Mutamento con e senza opere", ["mutamento di destinazione", "mutamento della destinazione d'uso", "senza opere", "con opere", "senza esecuzione di opere"]),
+      n("G4.2", "Riflessi sul classamento", ["riflessi sul classamento", "effetti sul classamento", "variazione del classamento"]),
     ]),
   ]),
 
   // ===========================================================================
   n("H", "Servizi e accesso ai dati", ["servizi telematici", "consultazione"], [
-    n("H1", "Visure e certificazioni", ["visura", "visure"], [
-      n("H1.1", "Visura per immobile e per soggetto", ["visura per immobile", "visura per soggetto"]),
+    n("H1", "Visure e certificazioni", ["visura catastale", "visure catastali", "rilascio di visure"], [
+      n("H1.1", "Visura per immobile e per soggetto", ["visura per immobile", "visura per soggetto", "visura attuale", "consultazione per immobile", "consultazione per soggetto"]),
       n("H1.2", "Visura storica", ["visura storica"]),
       n("H1.3", "Certificazione catastale", ["certificato catastale", "certificazione catastale"]),
     ]),
@@ -448,9 +453,9 @@ export const TASSONOMIA: TaxNode[] = [
         n("I3.1.1", "Professionisti abilitati", ["professionisti abilitati", "albo professionale"]),
         n("I3.1.2", "Firma digitale", ["firma digitale", "sottoscrizione digitale"]),
       ]),
-      n("I3.2", "Deleghe e incarichi", ["delega", "incarico professionale"]),
+      n("I3.2", "Deleghe e incarichi", ["atto di delega", "delega del contribuente", "incarico professionale", "conferimento dell'incarico"]),
     ]),
-    n("I4", "Sanzioni catastali", ["sanzione", "sanzioni"], [
+    n("I4", "Sanzioni catastali", ["sanzione catastale", "sanzioni catastali", "sanzione pecuniaria", "irrogazione della sanzione"], [
       n("I4.1", "Omessa dichiarazione", ["omessa dichiarazione", "omessa presentazione"]),
       n("I4.2", "Ravvedimento e riduzioni", ["ravvedimento operoso", "riduzione della sanzione"]),
     ]),
