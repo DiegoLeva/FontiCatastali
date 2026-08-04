@@ -9,7 +9,6 @@ import {
 import type { TopicCrumb, TopicDocsResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const revalidate = 3600;
 
 const PAGE_SIZE = 60;

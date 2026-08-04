@@ -4,8 +4,8 @@ import { TASSONOMIA, type TaxNode } from "@/lib/taxonomy";
 import type { TopicNode, TopicsResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-// L'albero cambia solo quando cambia il corpus: cache CDN 1h.
+// L'albero cambia solo quando si rigenera l'indice, cioe' a ogni deploy:
+// niente `force-dynamic`, cosi' la risposta resta in cache sulla CDN.
 export const revalidate = 3600;
 
 /**

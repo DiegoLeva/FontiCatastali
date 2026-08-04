@@ -39,13 +39,15 @@ fonticatastali/
 ├─ lib/
 │  ├─ db.ts                   # client Turso/libSQL (singleton)
 │  ├─ taxonomy.ts             # tassonomia a 4 livelli + lessico per nodo
-│  ├─ classify.ts             # classificatore deterministico + cache oraria
+│  ├─ classify.ts             # classificatore deterministico (build + riserva)
+│  ├─ topics-index.json       # GENERATO da scripts/build-topics.ts
 │  ├─ fts.ts                  # query MATCH sicura + sanitizzazione snippet
 │  ├─ types.ts                # tipi condivisi
 │  └─ useDebouncedValue.ts    # hook debounce
 ├─ sql/
 │  └─ fts5_setup.sql          # DDL FTS5 + trigger (da eseguire su Turso)
 ├─ scripts/
+│  ├─ build-topics.ts         # precalcolo della mappa (gira come `prebuild`)
 │  └─ copy-docs-locali.ps1    # copia i PDF in public/docs per il dev
 ├─ .env.example
 ├─ next.config.mjs
@@ -178,12 +180,33 @@ i documenti ai nodi che ne contengono almeno un termine.
   di una che ammette il residuo. Il campo `nodiVuoti` dice quanti nodi non hanno
   alcun documento — le due misure guidano la taratura del lessico.
 
-**Prestazioni.** Il confronto ingenuo (ogni termine contro ogni documento)
-sarebbe ~1M di scansioni su testo. Si usa un indice invertito: i termini di una
+**Prestazioni: il lavoro si fa in fase di build, non a ogni richiesta.**
+`scripts/build-topics.ts` gira come `prebuild` (quindi automaticamente prima di
+`next build`, anche su Vercel): scarica il corpus una volta, classifica e scrive
+`lib/topics-index.json`. A runtime si legge solo quel file — **zero letture dal
+database** per la mappa, e `/api/topics` risulta *statica* nel report di build,
+quindi servita dalla CDN.
+
+Senza questo passaggio ogni avvio a freddo della funzione serverless avrebbe
+dovuto riscaricare qualche megabyte di testo da Turso e rifare la
+classificazione: era la causa della lentezza iniziale.
+
+Dentro lo script, il confronto ingenuo (ogni termine contro ogni documento)
+sarebbe ~1M di scansioni su testo; si usa un indice invertito: i termini di una
 parola si risolvono con un lookup sul set di token del documento, le locuzioni
-si testano solo se la loro parola piu' lunga compare tra i token. Il risultato
-resta in cache di modulo per un'ora; la classificazione legge i primi 2000
-caratteri di `testo_estratto` piu' titolo, tema, cartella e nome file.
+si testano solo se la loro parola piu' lunga compare tra i token.
+
+> `lib/topics-index.json` e' un **artefatto generato**. Nel repository c'e' un
+> segnaposto vuoto (`"generato": false`) perche' typecheck e build funzionino
+> in un clone pulito; ogni build lo riscrive. Se dopo un build locale lo vedi
+> modificato in git, e' normale: non committarlo con i dati dentro.
+>
+> Rigenerarlo a mano: `npm run topics` (servono le variabili `TURSO_*`).
+
+**Strada di riserva.** Se al momento del build il database non e' raggiungibile,
+lo script scrive un indice vuoto e non fa fallire il deploy: l'applicazione
+classifica al volo alla prima richiesta, con cache di modulo di un'ora. Piu'
+lento, ma la mappa funziona lo stesso.
 
 **API**
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type {
   CatalogDoc,
   TopicDocsResponse,
@@ -9,77 +9,122 @@ import type {
   TopicsResponse,
 } from "@/lib/types";
 import { ResultsSkeleton } from "./Skeletons";
-import {
-  ArrowLeftIcon,
-  ChevronIcon,
-  DocIcon,
-  ExternalIcon,
-  SpinnerIcon,
-} from "./icons";
+import { ChevronIcon, DocIcon, ExternalIcon, SpinnerIcon } from "./icons";
 
 /* ========================================================================== */
-/* Documenti di un nodo (caricati su richiesta)                               */
+/* Percorso                                                                    */
 /* ========================================================================== */
 
-function DocRow({ doc }: { doc: CatalogDoc }) {
+/**
+ * Gli identificativi codificano la gerarchia ("A2.5.1"), quindi la catena degli
+ * antenati si ricava dalla stringa: nessuna ricerca nell'albero.
+ */
+function antenati(id: string): string[] {
+  const parti = id.split(".");
+  const radice = parti[0];
+  const out: string[] = [radice[0]];
+  if (radice.length > 1) out.push(radice);
+  for (let i = 1; i < parti.length; i++) out.push(parti.slice(0, i + 1).join("."));
+  return out;
+}
+
+function appiattisci(aree: TopicNode[]): Map<string, TopicNode> {
+  const m = new Map<string, TopicNode>();
+  const visita = (n: TopicNode) => {
+    m.set(n.id, n);
+    n.figli.forEach(visita);
+  };
+  aree.forEach(visita);
+  return m;
+}
+
+/* ========================================================================== */
+/* Documenti                                                                   */
+/* ========================================================================== */
+
+function DocRow({ doc, i }: { doc: CatalogDoc; i: number }) {
   const label = doc.titolo && doc.titolo !== "s.n." ? doc.titolo : doc.nomeFile;
   return (
-    <a
+    <motion.a
       href={doc.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group/doc flex items-center gap-2.5 rounded-md border border-transparent px-3 py-2 transition hover:border-hairline hover:bg-canvas-soft"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, delay: Math.min(i * 0.012, 0.25) }}
+      className="group/doc flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 transition hover:border-hairline hover:bg-canvas-soft"
     >
       <DocIcon className="h-3.5 w-3.5 shrink-0 text-mute group-hover/doc:text-link" />
-      <span className="min-w-0 flex-1 truncate text-[13px] text-ink group-hover/doc:text-link">
+      <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink group-hover/doc:text-link">
         {label}
       </span>
       {doc.anno !== "0000" && (
-        <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-mute">
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-mute">
           {doc.anno}
         </span>
       )}
       <ExternalIcon className="h-3 w-3 shrink-0 text-mute opacity-0 transition group-hover/doc:opacity-100" />
-    </a>
+    </motion.a>
   );
 }
 
-function DocList({ nodeId, total }: { nodeId: string; total: number }) {
-  const [docs, setDocs] = useState<CatalogDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+/** Cache dei documenti gia' scaricati: tornare indietro non ricarica nulla. */
+type DocCache = Map<string, { docs: CatalogDoc[]; totale: number }>;
 
-  const load = useCallback(
+function DocPanel({
+  nodeId,
+  total,
+  cache,
+}: {
+  nodeId: string;
+  total: number;
+  cache: DocCache;
+}) {
+  const [stato, setStato] = useState(() => cache.get(nodeId) ?? null);
+  const [loading, setLoading] = useState(!cache.has(nodeId));
+  const [errore, setErrore] = useState(false);
+
+  const carica = useCallback(
     async (offset: number) => {
       setLoading(true);
-      setError(false);
+      setErrore(false);
       try {
         const res = await fetch(
           `/api/topics/${encodeURIComponent(nodeId)}?offset=${offset}`
         );
         const json = (await res.json()) as TopicDocsResponse;
         if (json.error) throw new Error(json.error);
-        setDocs((prev) => (offset === 0 ? json.docs : [...prev, ...json.docs]));
+        const prec = offset === 0 ? [] : stato?.docs ?? [];
+        const agg = { docs: [...prec, ...json.docs], totale: json.totale };
+        cache.set(nodeId, agg);
+        setStato(agg);
       } catch {
-        setError(true);
+        setErrore(true);
       } finally {
         setLoading(false);
       }
     },
-    [nodeId]
+    [nodeId, stato, cache]
   );
 
   useEffect(() => {
-    setDocs([]);
-    load(0);
-  }, [load]);
+    const salvato = cache.get(nodeId);
+    if (salvato) {
+      setStato(salvato);
+      setLoading(false);
+      return;
+    }
+    setStato(null);
+    carica(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId]);
 
-  if (error) {
+  if (errore) {
     return (
       <div className="px-3 py-4 text-[13px] text-mute">
         Impossibile caricare i documenti.{" "}
         <button
-          onClick={() => load(0)}
+          onClick={() => carica(0)}
           className="font-medium text-link underline underline-offset-4"
         >
           Riprova
@@ -88,23 +133,31 @@ function DocList({ nodeId, total }: { nodeId: string; total: number }) {
     );
   }
 
+  const docs = stato?.docs ?? [];
+
   return (
-    <div className="space-y-0.5">
-      {docs.map((d) => (
-        <DocRow key={`${nodeId}-${d.id}`} doc={d} />
-      ))}
+    <div>
+      <div className="mb-1 flex items-center gap-2 px-3 font-mono text-[10.5px] uppercase tracking-[0.14em] text-mute">
+        <DocIcon className="h-3 w-3" />
+        {total} {total === 1 ? "documento" : "documenti"}
+      </div>
+      <div className="space-y-0.5">
+        {docs.map((d, i) => (
+          <DocRow key={`${nodeId}-${d.id}`} doc={d} i={i} />
+        ))}
+      </div>
       {loading && (
-        <div className="flex items-center gap-2 px-3 py-2 text-[12.5px] text-mute">
+        <div className="flex items-center gap-2 px-3 py-3 text-[12.5px] text-mute">
           <SpinnerIcon className="h-3.5 w-3.5" />
           Caricamento…
         </div>
       )}
-      {!loading && docs.length < total && (
+      {!loading && stato && docs.length < stato.totale && (
         <button
-          onClick={() => load(docs.length)}
-          className="mt-1 w-full rounded-md border border-hairline px-3 py-2 text-[12.5px] font-medium text-body transition hover:border-hairline-strong hover:bg-canvas-soft"
+          onClick={() => carica(docs.length)}
+          className="mt-2 w-full rounded-lg border border-hairline px-3 py-2.5 text-[13px] font-medium text-body transition hover:border-hairline-strong hover:bg-canvas-soft"
         >
-          Carica altri {Math.min(60, total - docs.length)} di {total}
+          Mostra altri {Math.min(60, stato.totale - docs.length)}
         </button>
       )}
     </div>
@@ -112,119 +165,92 @@ function DocList({ nodeId, total }: { nodeId: string; total: number }) {
 }
 
 /* ========================================================================== */
-/* Nodo ricorsivo: tema -> argomento -> sotto-argomento                        */
+/* Tessera di sottocategoria                                                   */
 /* ========================================================================== */
 
-const INDENT: Record<number, string> = {
-  2: "",
-  3: "ml-1 border-l border-hairline pl-3",
-  4: "ml-1 border-l border-hairline pl-3",
-};
-
-function NodeBlock({ node, depth }: { node: TopicNode; depth: number }) {
-  const [open, setOpen] = useState(false);
-  const hasChildren = node.figli.length > 0;
-  const isTheme = depth === 2;
-
+function Tile({
+  node,
+  max,
+  onOpen,
+  i,
+}: {
+  node: TopicNode;
+  max: number;
+  onOpen: () => void;
+  i: number;
+}) {
+  const quota = max > 0 ? Math.max(node.count / max, 0.04) : 0;
+  const sotto = node.figli.length;
   return (
-    <div
-      className={
-        isTheme
-          ? "overflow-hidden rounded-ds border border-hairline bg-canvas shadow-ds"
-          : ""
-      }
+    <motion.button
+      type="button"
+      onClick={onOpen}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: Math.min(i * 0.02, 0.18) }}
+      className="group relative flex flex-col gap-2 overflow-hidden rounded-xl border border-hairline bg-canvas p-4 text-left shadow-ds transition hover:-translate-y-0.5 hover:border-hairline-strong hover:shadow-ds-lg focus:outline-none focus-visible:shadow-focus"
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className={`flex w-full items-center gap-2.5 text-left transition hover:bg-canvas-soft ${
-          isTheme ? "px-4 py-3" : "rounded-md px-2 py-1.5"
-        }`}
-      >
-        <motion.span
-          animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: 0.18 }}
-          className="shrink-0 text-mute"
-        >
-          <ChevronIcon className={isTheme ? "h-4 w-4" : "h-3.5 w-3.5"} />
-        </motion.span>
-        <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-mute">
-          {node.id}
-        </span>
-        <span
-          className={`min-w-0 flex-1 truncate tracking-[-0.01em] text-ink ${
-            isTheme ? "text-[15px] font-medium" : "text-[13.5px]"
-          }`}
-        >
+      <div className="flex items-start gap-3">
+        <span className="min-w-0 flex-1 text-[14.5px] font-medium leading-snug tracking-[-0.015em] text-ink group-hover:text-link">
           {node.label}
         </span>
-        <span className="shrink-0 rounded-full border border-hairline bg-canvas-soft px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-body">
+        <span className="shrink-0 font-mono text-[15px] font-semibold tabular-nums text-ink">
           {node.count}
         </span>
-      </button>
+      </div>
 
-      {open && (
-        <div
-          className={`animate-panel-in ${
-            isTheme ? "border-t border-hairline p-2" : `mt-0.5 ${INDENT[depth] ?? ""}`
-          }`}
-        >
-          {hasChildren && (
-            <div className="space-y-0.5">
-              {node.figli.map((c) => (
-                <NodeBlock key={c.id} node={c} depth={depth + 1} />
-              ))}
-            </div>
-          )}
+      <div className="flex items-center gap-2">
+        <span className="text-[11.5px] text-mute">
+          {sotto > 0
+            ? `${sotto} ${sotto === 1 ? "sottocategoria" : "sottocategorie"}`
+            : "argomento finale"}
+        </span>
+        <ChevronIcon className="ml-auto h-3.5 w-3.5 shrink-0 text-mute transition group-hover:translate-x-0.5 group-hover:text-link" />
+      </div>
 
-          {/* La normativa del nodo e' sempre in chiaro: aprire un argomento
-              deve bastare a vedere che cosa contiene. */}
-          <div className={hasChildren ? "mt-3" : ""}>
-            {hasChildren && (
-              <div className="mb-1 flex items-center gap-2 border-t border-hairline px-2 pt-2.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-mute">
-                <DocIcon className="h-3 w-3" />
-                {node.count} documenti in {node.label}
-              </div>
-            )}
-            <DocList nodeId={node.id} total={node.count} />
-          </div>
-        </div>
-      )}
-    </div>
+      {/* Peso relativo tra fratelli: si legge il volume senza contare. */}
+      <span className="absolute inset-x-0 bottom-0 h-[3px] bg-canvas-soft-2">
+        <motion.span
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: quota }}
+          transition={{ duration: 0.45, delay: 0.1, ease: "easeOut" }}
+          style={{ transformOrigin: "left" }}
+          className="block h-full bg-link/45 group-hover:bg-link"
+        />
+      </span>
+    </motion.button>
   );
 }
 
 /* ========================================================================== */
-/* Nucleo + griglia delle aree                                                */
+/* Nucleo d'ingresso                                                           */
 /* ========================================================================== */
 
-function Nucleus({ total, aree }: { total: number; aree: number }) {
+function Nucleo({ totale, rami }: { totale: number; rami: number }) {
   return (
     <div className="flex flex-col items-center">
       <motion.div
-        initial={{ opacity: 0, scale: 0.94 }}
+        initial={{ opacity: 0, scale: 0.92 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        className="flex h-[104px] w-[104px] flex-col items-center justify-center rounded-full border border-hairline-strong bg-canvas shadow-ds"
+        transition={{ duration: 0.35, ease: "easeOut" }}
+        className="flex h-[108px] w-[108px] flex-col items-center justify-center rounded-full border border-hairline-strong bg-canvas shadow-ds"
       >
-        <span className="font-mono text-[26px] font-semibold leading-none tabular-nums tracking-[-0.03em] text-ink">
-          {total}
+        <span className="font-mono text-[27px] font-semibold leading-none tabular-nums tracking-[-0.03em] text-ink">
+          {totale}
         </span>
         <span className="mt-1 text-[11px] text-mute">documenti</span>
       </motion.div>
 
-      {/* Ventaglio dei rami: si allarga verso la griglia sottostante. */}
       <svg
         viewBox="0 0 800 48"
         preserveAspectRatio="none"
         aria-hidden="true"
-        className="h-8 w-full max-w-2xl text-hairline-strong"
+        className="h-9 w-full max-w-2xl text-hairline-strong"
       >
-        {Array.from({ length: aree }, (_, i) => {
-          const x = aree === 1 ? 400 : 60 + (i * 680) / (aree - 1);
+        {Array.from({ length: rami }, (_, i) => {
+          const x = rami === 1 ? 400 : 60 + (i * 680) / (rami - 1);
           return (
-            <line
+            <motion.line
               key={i}
               x1="400"
               y1="0"
@@ -233,48 +259,14 @@ function Nucleus({ total, aree }: { total: number; aree: number }) {
               stroke="currentColor"
               strokeWidth="1"
               vectorEffect="non-scaling-stroke"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.4, delay: 0.15 + i * 0.03 }}
             />
           );
         })}
       </svg>
     </div>
-  );
-}
-
-function AreaCard({
-  node,
-  onOpen,
-  index,
-}: {
-  node: TopicNode;
-  onOpen: () => void;
-  index: number;
-}) {
-  const temi = node.figli.length;
-  return (
-    <motion.button
-      type="button"
-      onClick={onOpen}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, delay: Math.min(index * 0.025, 0.2) }}
-      className="group flex flex-col items-start gap-2 rounded-ds border border-hairline bg-canvas p-4 text-left shadow-ds transition hover:border-hairline-strong hover:bg-canvas-soft focus:outline-none focus-visible:shadow-focus"
-    >
-      <div className="flex w-full items-center gap-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-ink font-mono text-[13px] font-bold text-canvas">
-          {node.id}
-        </span>
-        <span className="ml-auto shrink-0 rounded-full border border-hairline bg-canvas-soft px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-body">
-          {node.count}
-        </span>
-      </div>
-      <span className="text-[14.5px] font-medium leading-snug tracking-[-0.015em] text-ink group-hover:text-link">
-        {node.label}
-      </span>
-      <span className="font-mono text-[10.5px] text-mute">
-        {temi} {temi === 1 ? "tema" : "temi"}
-      </span>
-    </motion.button>
   );
 }
 
@@ -284,48 +276,43 @@ function AreaCard({
 
 export function TopicMap() {
   const [data, setData] = useState<TopicsResponse | null>(null);
-  const [status, setStatus] = useState<"loading" | "done" | "error">("loading");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [stato, setStato] = useState<"loading" | "done" | "error">("loading");
+  const [nodo, setNodo] = useState<string | null>(null);
+  const cache = useRef<DocCache>(new Map()).current;
 
   useEffect(() => {
-    let alive = true;
+    let vivo = true;
     fetch("/api/topics")
       .then((r) => r.json())
       .then((j: TopicsResponse) => {
-        if (!alive) return;
+        if (!vivo) return;
         if (j.error) throw new Error(j.error);
         setData(j);
-        setStatus("done");
+        setStato("done");
       })
-      .catch(() => alive && setStatus("error"));
+      .catch(() => vivo && setStato("error"));
     return () => {
-      alive = false;
+      vivo = false;
     };
   }, []);
 
-  // Ripristina l'area dall'indirizzo, cosi' un argomento si puo' condividere.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("argomento");
-    if (id) setSelected(id);
+    if (id) setNodo(id);
   }, []);
 
-  const apri = useCallback((id: string | null) => {
-    setSelected(id);
+  const vai = useCallback((id: string | null) => {
+    setNodo(id);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("argomento", id);
     else url.searchParams.delete("argomento");
     window.history.replaceState(null, "", url);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
-  const area = useMemo(
-    () => (selected ? data?.aree.find((a) => a.id === selected) ?? null : null),
-    [data, selected]
-  );
+  const indice = useMemo(() => (data ? appiattisci(data.aree) : new Map()), [data]);
 
-  if (status === "loading") return <ResultsSkeleton />;
-
-  if (status === "error" || !data) {
+  if (stato === "loading") return <ResultsSkeleton />;
+  if (stato === "error" || !data) {
     return (
       <div className="rounded-ds border border-dashed border-hairline p-6 text-center text-body">
         Impossibile costruire la mappa degli argomenti.
@@ -333,96 +320,142 @@ export function TopicMap() {
     );
   }
 
-  /* ---- Vista di un'area: briciole + albero annidato ---- */
-  if (selected && (area || selected === "residuo")) {
-    const label = area ? area.label : "Da classificare";
-    const count = area ? area.count : data.residuo;
+  const corrente: TopicNode | null = nodo ? indice.get(nodo) ?? null : null;
+  const isResiduo = nodo === "residuo";
+  const catena = corrente ? antenati(corrente.id) : [];
+
+  /* ---- Dentro un nodo ---- */
+  if (corrente || isResiduo) {
+    const label = corrente ? corrente.label : "Da classificare";
+    const count = corrente ? corrente.count : data.residuo;
+    const figli = corrente?.figli ?? [];
+    const max = figli.reduce((m, f) => Math.max(m, f.count), 0);
 
     return (
       <section className="w-full">
-        <button
-          onClick={() => apri(null)}
-          className="mb-4 flex items-center gap-2 text-[13px] font-medium text-mute transition hover:text-ink"
-        >
-          <ArrowLeftIcon className="h-3.5 w-3.5" />
-          Tutti gli argomenti
-        </button>
+        {/* Briciole: il percorso e' sempre visibile e sempre cliccabile. */}
+        <nav className="mb-5 flex flex-wrap items-center gap-1 text-[12.5px]">
+          <button
+            onClick={() => vai(null)}
+            className="rounded-md px-1.5 py-1 text-mute transition hover:bg-canvas-soft hover:text-ink"
+          >
+            Tutti gli argomenti
+          </button>
+          {catena.map((id, i) => {
+            const n = indice.get(id);
+            if (!n) return null;
+            const ultimo = i === catena.length - 1;
+            return (
+              <span key={id} className="flex items-center gap-1">
+                <ChevronIcon className="h-3 w-3 shrink-0 text-hairline-strong" />
+                {ultimo ? (
+                  <span className="px-1.5 py-1 font-medium text-ink">{n.label}</span>
+                ) : (
+                  <button
+                    onClick={() => vai(id)}
+                    className="rounded-md px-1.5 py-1 text-mute transition hover:bg-canvas-soft hover:text-ink"
+                  >
+                    {n.label}
+                  </button>
+                )}
+              </span>
+            );
+          })}
+          {isResiduo && (
+            <span className="flex items-center gap-1">
+              <ChevronIcon className="h-3 w-3 shrink-0 text-hairline-strong" />
+              <span className="px-1.5 py-1 font-medium text-ink">{label}</span>
+            </span>
+          )}
+        </nav>
 
-        <div className="mb-5 flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-ds bg-ink font-mono text-[15px] font-bold text-canvas">
-            {area ? area.id : "?"}
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-[22px] font-semibold tracking-display-sm text-ink">
-              {label}
-            </h2>
-            <p className="font-mono text-[11.5px] text-mute">
-              {count} documenti
-              {area && area.figli.length > 0 && ` · ${area.figli.length} temi`}
-            </p>
-          </div>
-        </div>
-
-        {area ? (
-          <>
-            <div className="space-y-2.5">
-              {area.figli.map((t) => (
-                <NodeBlock key={t.id} node={t} depth={2} />
-              ))}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={nodo}
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -12 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+          >
+            <div className="mb-5">
+              <h2 className="text-[26px] font-semibold leading-tight tracking-display-sm text-ink">
+                {label}
+              </h2>
+              <p className="mt-1 text-[13px] text-mute">
+                {count} {count === 1 ? "documento" : "documenti"}
+                {figli.length > 0 &&
+                  ` · ${figli.length} ${
+                    figli.length === 1 ? "sottocategoria" : "sottocategorie"
+                  }`}
+              </p>
             </div>
 
-            {/* Tutta la normativa dell'area, senza dover aprire un tema. */}
-            <div className="mt-6 rounded-ds border border-hairline bg-canvas p-2 shadow-ds">
-              <div className="mb-1 flex items-center gap-2 px-2 pt-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-mute">
-                <DocIcon className="h-3 w-3" />
-                {area.count} documenti in {area.label}
+            {figli.length > 0 && (
+              <div className="mb-8 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {figli.map((f, i) => (
+                  <Tile
+                    key={f.id}
+                    node={f}
+                    max={max}
+                    i={i}
+                    onOpen={() => vai(f.id)}
+                  />
+                ))}
               </div>
-              <DocList nodeId={area.id} total={area.count} />
+            )}
+
+            <div className="rounded-xl border border-hairline bg-canvas p-2 pt-3 shadow-ds">
+              {isResiduo && (
+                <p className="px-3 pb-3 text-[13px] text-mute">
+                  Documenti che nessuna regola del lessico ha intercettato. Il
+                  loro numero misura quanto la mappa va ancora tarata.
+                </p>
+              )}
+              <DocPanel
+                nodeId={nodo!}
+                total={count}
+                cache={cache}
+              />
             </div>
-          </>
-        ) : (
-          <div className="rounded-ds border border-hairline bg-canvas p-2 shadow-ds">
-            <p className="px-3 pb-2 pt-1 text-[13px] text-mute">
-              Documenti che nessuna regola del lessico ha intercettato. Il loro
-              numero misura quanto la mappa va ancora tarata.
-            </p>
-            <DocList nodeId="residuo" total={data.residuo} />
-          </div>
-        )}
+          </motion.div>
+        </AnimatePresence>
       </section>
     );
   }
 
-  /* ---- Vista d'insieme: nucleo + aree ---- */
+  /* ---- Ingresso ---- */
+  const maxArea = data.aree.reduce((m, a) => Math.max(m, a.count), 0);
+
   return (
     <section className="w-full">
-      <div className="mb-4 flex items-baseline gap-3">
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-mono text-[12px] uppercase tracking-[0.14em] text-mute">
           Mappa degli argomenti
         </h2>
         <span className="font-mono text-[12px] text-mute">
-          {data.aree.length} aree · {data.classificati} classificati
+          {data.aree.length} aree · {data.classificati} classificati ·{" "}
+          {data.residuo} da classificare
         </span>
       </div>
 
-      <Nucleus total={data.totale} aree={Math.max(data.aree.length, 1)} />
+      <Nucleo totale={data.totale} rami={Math.max(data.aree.length, 1)} />
 
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {data.aree.map((a, i) => (
-          <AreaCard key={a.id} node={a} index={i} onOpen={() => apri(a.id)} />
+          <Tile key={a.id} node={a} max={maxArea} i={i} onOpen={() => vai(a.id)} />
         ))}
       </div>
 
       {data.residuo > 0 && (
         <button
-          onClick={() => apri("residuo")}
-          className="mt-2.5 flex w-full items-center gap-2.5 rounded-ds border border-dashed border-hairline px-4 py-3 text-left transition hover:border-hairline-strong hover:bg-canvas-soft"
+          onClick={() => vai("residuo")}
+          className="mt-2.5 flex w-full items-center gap-3 rounded-xl border border-dashed border-hairline px-4 py-3.5 text-left transition hover:border-hairline-strong hover:bg-canvas-soft"
         >
-          <span className="font-mono text-[13px] text-mute">?</span>
           <span className="text-[13.5px] text-body">Da classificare</span>
-          <span className="ml-auto font-mono text-[11px] tabular-nums text-mute">
+          <span className="ml-auto font-mono text-[13px] tabular-nums text-mute">
             {data.residuo}
           </span>
+          <ChevronIcon className="h-3.5 w-3.5 shrink-0 text-mute" />
         </button>
       )}
     </section>

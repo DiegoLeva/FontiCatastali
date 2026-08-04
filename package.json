@@ -5,7 +5,9 @@
   "description": "Motore di ricerca avanzato per la normativa catastale italiana (FTS5 su Turso).",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "tsx scripts/build-topics.ts",
     "build": "next build",
+    "topics": "tsx scripts/build-topics.ts",
     "start": "next start",
     "lint": "next lint",
     "upload:docs": "node scripts/upload-blob.mjs"
@@ -28,6 +30,7 @@
     "eslint-config-next": "^14.2.35",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
+    "tsx": "^4.23.5",
     "typescript": "^5.5.3"
   }
 }

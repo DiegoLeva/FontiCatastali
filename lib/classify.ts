@@ -3,27 +3,35 @@
  *
  * Perche' non embedding: su contenuto giuridico la spiegabilita' conta piu'
  * della sfumatura. Una regola si legge, si discute e si corregge in una riga;
- * un vettore che archivia male una circolare e' opaco. Il corpus e' chiuso e
- * di dimensioni modeste, quindi il vantaggio semantico non compensa la perdita
- * di controllo.
+ * un vettore che archivia male una circolare e' opaco.
  *
- * Prestazioni: il confronto ingenuo (ogni termine contro ogni documento)
- * sarebbe ~1M di scansioni su testo. Qui si usa un indice invertito:
- *   - i termini di una sola parola si risolvono con un lookup sul set di token
- *     del documento;
- *   - le locuzioni si testano solo se la loro parola piu' lunga compare tra i
- *     token, evitando la quasi totalita' dei confronti.
- * Il risultato viene tenuto in cache di modulo per un'ora.
+ * QUANDO avviene il lavoro pesante: **in fase di build**, non a ogni richiesta.
+ * `scripts/build-topics.ts` scarica il corpus una volta sola, classifica e
+ * scrive `lib/topics-index.json`; a runtime si legge solo quel file. Senza
+ * questo passaggio ogni avvio a freddo della funzione serverless avrebbe
+ * dovuto riscaricare qualche megabyte di testo da Turso e rifare il lavoro,
+ * ed e' esattamente cio' che rendeva lenta la mappa.
+ *
+ * Resta la strada di riserva: se l'indice precalcolato manca (sviluppo locale
+ * senza credenziali al momento del build) si classifica al volo, con cache di
+ * modulo. Piu' lento, ma la mappa funziona lo stesso.
  */
 
 import { getDb } from "./db";
 import { NODI, NODO_RESIDUO } from "./taxonomy";
+import precalcolato from "./topics-index.json";
 import type { CatalogDoc } from "./types";
 
 const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
 const CACHE_TTL_MS = 60 * 60 * 1000;
-/** Porzione iniziale del testo estratto usata per la classificazione. */
-const INCIPIT_CHARS = 2000;
+
+/**
+ * Caratteri di `testo_estratto` usati per la classificazione. In fase di build
+ * si puo' essere generosi (il costo si paga una volta); nella strada di riserva
+ * a runtime si resta bassi per non appesantire ogni avvio a freddo.
+ */
+export const INCIPIT_BUILD = 4000;
+const INCIPIT_RUNTIME = 1500;
 
 /* -------------------------------------------------------------------------- */
 /* Normalizzazione                                                            */
@@ -54,7 +62,6 @@ function tokenizza(testo: string): Set<string> {
 /* -------------------------------------------------------------------------- */
 
 interface Locuzione {
-  /** Regex con confini, gia' compilata. */
   re: RegExp;
   nodi: string[];
 }
@@ -88,7 +95,6 @@ const INDICE: IndiceTermini = (() => {
   const locuzioni = new Map<string, Locuzione[]>();
   const perTermine = new Map<string, string[]>();
 
-  // Un termine puo' comparire in piu' nodi: si raccolgono prima le occorrenze.
   for (const nodo of NODI.values()) {
     for (const grezzo of nodo.lessico) {
       const termine = normalizza(grezzo).trim();
@@ -115,41 +121,16 @@ const INDICE: IndiceTermini = (() => {
   return { parole, locuzioni };
 })();
 
-/* -------------------------------------------------------------------------- */
-/* Classificazione                                                             */
-/* -------------------------------------------------------------------------- */
-
-export interface Indice {
-  /** Totale documenti nel corpus. */
-  totale: number;
-  /** Documenti intercettati da almeno una regola. */
-  classificati: number;
-  /** id nodo -> documenti del nodo e di tutti i suoi discendenti. */
-  perNodo: Map<string, CatalogDoc[]>;
-  costruitoIl: number;
-}
-
-function buildUrl(cartella: string, nomeFile: string): string {
-  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
-    nomeFile
-  )}`;
-}
-
-function fmtAnno(a: unknown): string {
-  const n = typeof a === "bigint" ? Number(a) : Number(a ?? 0);
-  return n > 0 ? String(n).padStart(4, "0") : "0000";
-}
-
-const SQL = `
-  SELECT id, cartella_origine AS cartella, nuovo_nome_file AS nomeFile,
-         titolo, anno, tema,
-         substr(testo_estratto, 1, ${INCIPIT_CHARS}) AS incipit
-  FROM documenti;
-`;
-
-/** Nodi cui appartiene un documento, gia' propagati agli antenati. */
-function nodiDelDocumento(testo: string): Set<string> {
-  const token = tokenizza(testo);
+/**
+ * Nodi cui appartiene un documento, gia' propagati agli antenati: i documenti
+ * di un nodo comprendono sempre quelli dei suoi discendenti.
+ *
+ * L'indice invertito evita il confronto ingenuo (ogni termine contro ogni
+ * documento): le parole singole si risolvono con un lookup sul set di token, le
+ * locuzioni si testano solo se la loro parola piu' lunga compare tra i token.
+ */
+export function nodiDelDocumento(testoNormalizzato: string): Set<string> {
+  const token = tokenizza(testoNormalizzato);
   const diretti = new Set<string>();
 
   for (const t of token) {
@@ -159,13 +140,11 @@ function nodiDelDocumento(testo: string): Set<string> {
     const candidate = INDICE.locuzioni.get(t);
     if (candidate) {
       for (const loc of candidate) {
-        if (loc.re.test(testo)) for (const id of loc.nodi) diretti.add(id);
+        if (loc.re.test(testoNormalizzato)) for (const id of loc.nodi) diretti.add(id);
       }
     }
   }
 
-  // Propagazione agli antenati: i documenti di un nodo comprendono sempre
-  // quelli dei suoi discendenti.
   const conAntenati = new Set<string>();
   for (const id of diretti) {
     let cur: string | undefined = id;
@@ -177,9 +156,95 @@ function nodiDelDocumento(testo: string): Set<string> {
   return conAntenati;
 }
 
-async function costruisciIndice(): Promise<Indice> {
+/** Testo su cui si cerca: metadati curati piu' l'incipit del documento. */
+export function testoDaClassificare(r: {
+  cartella: string;
+  nomeFile: string;
+  titolo: string;
+  tema: string;
+  incipit: string;
+}): string {
+  return normalizza(
+    [r.cartella, r.nomeFile, r.titolo, r.tema, r.incipit].join(" ")
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Indice dei documenti                                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface Indice {
+  totale: number;
+  classificati: number;
+  /** id nodo -> documenti del nodo e di tutti i suoi discendenti. */
+  perNodo: Map<string, CatalogDoc[]>;
+  /** true se i dati vengono dall'indice costruito in fase di build. */
+  precalcolato: boolean;
+  costruitoIl: number;
+}
+
+/** [id, cartella, nomeFile, titolo, anno] — forma compatta su disco. */
+export type DocTuple = [number, string, string, string, string];
+
+export interface IndicePrecalcolato {
+  generato: boolean;
+  creatoIl: string;
+  totale: number;
+  classificati: number;
+  docs: DocTuple[];
+  /** id nodo -> indici dentro `docs` */
+  nodi: Record<string, number[]>;
+}
+
+function buildUrl(cartella: string, nomeFile: string): string {
+  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
+    nomeFile
+  )}`;
+}
+
+export function fmtAnno(a: unknown): string {
+  const n = typeof a === "bigint" ? Number(a) : Number(a ?? 0);
+  return n > 0 ? String(n).padStart(4, "0") : "0000";
+}
+
+/**
+ * L'URL del bucket si compone a runtime, non in fase di build: cambiare
+ * `NEXT_PUBLIC_DOCS_BASE_URL` non deve costringere a rigenerare l'indice.
+ */
+function daPrecalcolato(p: IndicePrecalcolato): Indice {
+  const docs: CatalogDoc[] = p.docs.map(([id, cartella, nomeFile, titolo, anno]) => ({
+    id,
+    titolo,
+    anno,
+    nomeFile,
+    url: buildUrl(cartella, nomeFile),
+  }));
+
+  const perNodo = new Map<string, CatalogDoc[]>();
+  for (const [nodo, indici] of Object.entries(p.nodi)) {
+    perNodo.set(nodo, indici.map((i) => docs[i]).filter(Boolean));
+  }
+
+  return {
+    totale: p.totale,
+    classificati: p.classificati,
+    perNodo,
+    precalcolato: true,
+    costruitoIl: Date.now(),
+  };
+}
+
+const SQL_RUNTIME = `
+  SELECT id, cartella_origine AS cartella, nuovo_nome_file AS nomeFile,
+         titolo, anno, tema,
+         substr(testo_estratto, 1, ${INCIPIT_RUNTIME}) AS incipit
+  FROM documenti;
+`;
+
+/** Strada di riserva: classificazione al volo quando manca il precalcolato. */
+async function daDatabase(): Promise<Indice> {
   const db = getDb();
-  const rs = await db.execute(SQL);
+  const rs = await db.execute(SQL_RUNTIME);
 
   const perNodo = new Map<string, CatalogDoc[]>();
   let classificati = 0;
@@ -196,27 +261,25 @@ async function costruisciIndice(): Promise<Indice> {
       url: buildUrl(cartella, nomeFile),
     };
 
-    const testo = normalizza(
-      [cartella, nomeFile, titolo, String(row.tema ?? ""), String(row.incipit ?? "")].join(" ")
+    const nodi = nodiDelDocumento(
+      testoDaClassificare({
+        cartella,
+        nomeFile,
+        titolo,
+        tema: String(row.tema ?? ""),
+        incipit: String(row.incipit ?? ""),
+      })
     );
 
-    const nodi = nodiDelDocumento(testo);
-    if (nodi.size === 0) {
-      const lista = perNodo.get(NODO_RESIDUO);
-      if (lista) lista.push(doc);
-      else perNodo.set(NODO_RESIDUO, [doc]);
-      continue;
-    }
-
-    classificati++;
-    for (const id of nodi) {
+    const destinazioni = nodi.size === 0 ? [NODO_RESIDUO] : [...nodi];
+    if (nodi.size > 0) classificati++;
+    for (const id of destinazioni) {
       const lista = perNodo.get(id);
       if (lista) lista.push(doc);
       else perNodo.set(id, [doc]);
     }
   }
 
-  // Piu' recenti in cima, a parita' d'anno in ordine di titolo.
   for (const lista of perNodo.values()) {
     lista.sort(
       (a, b) => b.anno.localeCompare(a.anno) || a.titolo.localeCompare(b.titolo)
@@ -227,6 +290,7 @@ async function costruisciIndice(): Promise<Indice> {
     totale: rs.rows.length,
     classificati,
     perNodo,
+    precalcolato: false,
     costruitoIl: Date.now(),
   };
 }
@@ -234,12 +298,19 @@ async function costruisciIndice(): Promise<Indice> {
 let cache: Indice | null = null;
 let inFlight: Promise<Indice> | null = null;
 
-/** Indice classificato, ricostruito al piu' una volta all'ora. */
 export async function getIndice(): Promise<Indice> {
+  // Il JSON e' generato: TypeScript ne inferisce le tuple come array larghi.
+  const p = precalcolato as unknown as IndicePrecalcolato;
+  if (p.generato) {
+    // Nessuna lettura dal database: costa solo la mappatura degli URL.
+    if (!cache || !cache.precalcolato) cache = daPrecalcolato(p);
+    return cache;
+  }
+
   if (cache && Date.now() - cache.costruitoIl < CACHE_TTL_MS) return cache;
   if (inFlight) return inFlight;
 
-  inFlight = costruisciIndice()
+  inFlight = daDatabase()
     .then((idx) => {
       cache = idx;
       return idx;
