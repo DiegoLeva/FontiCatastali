@@ -10,8 +10,8 @@ const OPZIONI: {
   label: string;
   Icon: typeof MapIcon;
 }[] = [
-  { key: "argomenti", label: "Sfoglia per argomenti", Icon: MapIcon },
   { key: "cartelle", label: "Sfoglia per cartella", Icon: LibraryIcon },
+  { key: "argomenti", label: "Sfoglia per argomenti", Icon: MapIcon },
 ];
 
 /**

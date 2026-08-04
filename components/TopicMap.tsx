@@ -123,12 +123,7 @@ const INDENT: Record<number, string> = {
 
 function NodeBlock({ node, depth }: { node: TopicNode; depth: number }) {
   const [open, setOpen] = useState(false);
-  const [showDocs, setShowDocs] = useState(false);
   const hasChildren = node.figli.length > 0;
-
-  // Le foglie non hanno altro da mostrare: i documenti si aprono subito.
-  const docsVisible = open && (!hasChildren || showDocs);
-
   const isTheme = depth === 2;
 
   return (
@@ -183,21 +178,17 @@ function NodeBlock({ node, depth }: { node: TopicNode; depth: number }) {
             </div>
           )}
 
-          {hasChildren && (
-            <button
-              onClick={() => setShowDocs((v) => !v)}
-              className="mt-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] text-mute transition hover:bg-canvas-soft hover:text-body"
-            >
-              <DocIcon className="h-3.5 w-3.5" />
-              {showDocs ? "Nascondi i documenti" : `Tutti i ${node.count} documenti`}
-            </button>
-          )}
-
-          {docsVisible && (
-            <div className={hasChildren ? "mt-1" : ""}>
-              <DocList nodeId={node.id} total={node.count} />
-            </div>
-          )}
+          {/* La normativa del nodo e' sempre in chiaro: aprire un argomento
+              deve bastare a vedere che cosa contiene. */}
+          <div className={hasChildren ? "mt-3" : ""}>
+            {hasChildren && (
+              <div className="mb-1 flex items-center gap-2 border-t border-hairline px-2 pt-2.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-mute">
+                <DocIcon className="h-3 w-3" />
+                {node.count} documenti in {node.label}
+              </div>
+            )}
+            <DocList nodeId={node.id} total={node.count} />
+          </div>
         </div>
       )}
     </div>
@@ -373,11 +364,22 @@ export function TopicMap() {
         </div>
 
         {area ? (
-          <div className="space-y-2.5">
-            {area.figli.map((t) => (
-              <NodeBlock key={t.id} node={t} depth={2} />
-            ))}
-          </div>
+          <>
+            <div className="space-y-2.5">
+              {area.figli.map((t) => (
+                <NodeBlock key={t.id} node={t} depth={2} />
+              ))}
+            </div>
+
+            {/* Tutta la normativa dell'area, senza dover aprire un tema. */}
+            <div className="mt-6 rounded-ds border border-hairline bg-canvas p-2 shadow-ds">
+              <div className="mb-1 flex items-center gap-2 px-2 pt-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-mute">
+                <DocIcon className="h-3 w-3" />
+                {area.count} documenti in {area.label}
+              </div>
+              <DocList nodeId={area.id} total={area.count} />
+            </div>
+          </>
         ) : (
           <div className="rounded-ds border border-hairline bg-canvas p-2 shadow-ds">
             <p className="px-3 pb-2 pt-1 text-[13px] text-mute">
