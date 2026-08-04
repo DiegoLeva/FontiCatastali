@@ -15,13 +15,20 @@ conteggio) → file (con anteprima). Click su un file = apre il PDF originale.
 fonticatastali/
 ├─ app/
 │  ├─ api/
-│  │  └─ search/
-│  │     └─ route.ts          # API ricerca: FTS5 MATCH + snippet() + grouping
+│  │  ├─ search/
+│  │  │  └─ route.ts          # API ricerca: FTS5 MATCH + snippet() + grouping
+│  │  ├─ catalog/
+│  │  │  └─ route.ts          # API catalogo: albero cartella -> anno -> file
+│  │  └─ topics/
+│  │     ├─ route.ts          # API argomenti: albero a 4 livelli con conteggi
+│  │     └─ [id]/route.ts     # API documenti di un nodo (paginati)
 │  ├─ globals.css             # Tailwind + stile <mark> + scrollbar
 │  ├─ layout.tsx              # root layout, font Inter, metadata, dark mode
 │  └─ page.tsx                # pagina (server) -> monta <SearchApp/>
 ├─ components/
 │  ├─ SearchApp.tsx           # orchestratore client: debounce, fetch, stati
+│  ├─ BrowseSwitch.tsx        # selettore: per argomenti / per cartella
+│  ├─ TopicMap.tsx            # mappa degli argomenti: nucleo, aree, drill-down
 │  ├─ SearchBar.tsx           # barra di ricerca (stile Google/Perplexity)
 │  ├─ ResultsTree.tsx         # L1 radice (query) + connettore + rami
 │  ├─ FolderNode.tsx          # L2 ramo: cartella + badge, accordion Framer
@@ -31,6 +38,8 @@ fonticatastali/
 │  └─ icons.tsx               # icone SVG inline (zero dipendenze)
 ├─ lib/
 │  ├─ db.ts                   # client Turso/libSQL (singleton)
+│  ├─ taxonomy.ts             # tassonomia a 4 livelli + lessico per nodo
+│  ├─ classify.ts             # classificatore deterministico + cache oraria
 │  ├─ fts.ts                  # query MATCH sicura + sanitizzazione snippet
 │  ├─ types.ts                # tipi condivisi
 │  └─ useDebouncedValue.ts    # hook debounce
@@ -138,6 +147,56 @@ LIMIT 300;
 
 Il server raggruppa per `cartella_origine` (ordine per numero di risultati) →
 struttura ad albero pronta per il client.
+
+---
+
+## 4-bis. Sfoglia per argomenti (mappa a 4 livelli)
+
+Oltre alla ricerca, la home offre una **mappa degli argomenti**: dal totale del
+corpus fino al sotto-argomento specifico, in quattro livelli.
+
+```
+area (9)  ->  tema (39)  ->  argomento (108)  ->  sotto-argomento (147)
+   A            A4              A4.2                  A4.2.1
+Fabbricati   Immobili       Imbullonati e         Legge di stabilita'
+             speciali       impianti fissi        2016
+```
+
+**Come vengono assegnati i documenti** (`lib/taxonomy.ts` + `lib/classify.ts`):
+ogni nodo possiede un **lessico** di termini; uno scorrimento del corpus assegna
+i documenti ai nodi che ne contengono almeno un termine.
+
+- **Deterministico, non a embedding.** Su contenuto giuridico la spiegabilita'
+  conta piu' della sfumatura: una regola si legge e si corregge in una riga, un
+  vettore che archivia male una circolare e' opaco. Il lessico si modifica in
+  `lib/taxonomy.ts` senza toccare il resto dell'applicazione.
+- **Multi-etichetta.** Un documento puo' stare in piu' nodi (una circolare sulla
+  rendita degli imbullonati vive sotto `A3` e sotto `A4.2`). I documenti di un
+  nodo comprendono sempre quelli dei suoi discendenti.
+- **Nodo “Da classificare”.** I documenti che nessuna regola intercetta restano
+  visibili con il loro conteggio: una mappa che finge copertura totale e' peggio
+  di una che ammette il residuo. Il campo `nodiVuoti` dice quanti nodi non hanno
+  alcun documento — le due misure guidano la taratura del lessico.
+
+**Prestazioni.** Il confronto ingenuo (ogni termine contro ogni documento)
+sarebbe ~1M di scansioni su testo. Si usa un indice invertito: i termini di una
+parola si risolvono con un lookup sul set di token del documento, le locuzioni
+si testano solo se la loro parola piu' lunga compare tra i token. Il risultato
+resta in cache di modulo per un'ora; la classificazione legge i primi 2000
+caratteri di `testo_estratto` piu' titolo, tema, cartella e nome file.
+
+**API**
+
+| Endpoint | Cosa restituisce |
+|----------|------------------|
+| `GET /api/topics` | albero con i conteggi (i nodi a zero sono esclusi) |
+| `GET /api/topics/<id>?offset=0` | documenti del nodo e dei discendenti, 60 per pagina |
+
+**Indirizzi condivisibili**: `/?argomento=A2` apre la mappa direttamente su
+quel nodo.
+
+Lo “Sfoglia per cartella” preesistente **resta**: risponde a una domanda diversa
+(“dov'era quel file?”). I due modi convivono nel selettore sopra l'albero.
 
 ---
 

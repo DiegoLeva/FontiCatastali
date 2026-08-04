@@ -13,6 +13,8 @@ import { MeshGradient } from "./MeshGradient";
 import { Logo } from "./Logo";
 import { ExactToggle } from "./ExactToggle";
 import { BrowseTree } from "./BrowseTree";
+import { BrowseSwitch, type BrowseMode } from "./BrowseSwitch";
+import { TopicMap } from "./TopicMap";
 import { SearchIcon } from "./icons";
 
 const MIN_CHARS = 2;
@@ -26,6 +28,7 @@ export function SearchApp() {
   const [errorMsg, setErrorMsg] = useState("");
   const [activeDecades, setActiveDecades] = useState<string[]>([]);
   const [exact, setExact] = useState(false);
+  const [browseMode, setBrowseMode] = useState<BrowseMode>("cartelle");
 
   const debounced = useDebouncedValue(query, 250);
   const abortRef = useRef<AbortController | null>(null);
@@ -71,6 +74,13 @@ export function SearchApp() {
   useEffect(() => {
     setActiveDecades([]);
   }, [data]);
+
+  // Un indirizzo con ?argomento=... apre direttamente la mappa su quel nodo.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("argomento")) {
+      setBrowseMode("argomenti");
+    }
+  }, []);
 
   const decades = useMemo(
     () => (data ? computeDecades(data.groups) : []),
@@ -206,10 +216,12 @@ export function SearchApp() {
           </>
         )}
 
-        {/* Biblioteca: albero navigabile, mostrato quando non si sta cercando. */}
+        {/* Consultazione libera, mostrata quando non si sta cercando: mappa
+            degli argomenti oppure albero per cartella e anno. */}
         {heroActive && (
           <div className="mt-10">
-            <BrowseTree />
+            <BrowseSwitch mode={browseMode} onChange={setBrowseMode} />
+            {browseMode === "argomenti" ? <TopicMap /> : <BrowseTree />}
           </div>
         )}
       </div>

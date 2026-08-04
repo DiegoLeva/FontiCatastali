@@ -43,6 +43,44 @@ export interface CatalogResponse {
   error?: string;
 }
 
+/** ---- Argomenti (mappa mentale a 4 livelli) ---- */
+
+/** Nodo dell'albero degli argomenti, con il conteggio dei documenti. */
+export interface TopicNode {
+  id: string; // "A", "A1", "A1.1", "A1.1.1"
+  label: string;
+  count: number; // documenti del nodo, discendenti inclusi
+  figli: TopicNode[];
+}
+
+export interface TopicsResponse {
+  /** Documenti nel corpus. */
+  totale: number;
+  /** Documenti intercettati da almeno un nodo. */
+  classificati: number;
+  /** Documenti che nessuna regola ha intercettato. */
+  residuo: number;
+  /** Nodi senza documenti, esclusi dall'albero: misura da tarare nel tempo. */
+  nodiVuoti: number;
+  aree: TopicNode[];
+  error?: string;
+}
+
+/** Anello della briciola di pane. */
+export interface TopicCrumb {
+  id: string;
+  label: string;
+}
+
+export interface TopicDocsResponse {
+  id: string;
+  label: string;
+  percorso: TopicCrumb[];
+  totale: number;
+  docs: CatalogDoc[];
+  error?: string;
+}
+
 /** Faccetta di filtro per decennio. */
 export interface DecadeFacet {
   key: string; // "2010" oppure "0000"

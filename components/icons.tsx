@@ -86,6 +86,37 @@ export function FilterIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Nodo centrale con rami: la mappa per argomenti. */
+export function MapIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="4.5" cy="5" r="2" />
+      <circle cx="19.5" cy="5" r="2" />
+      <circle cx="19.5" cy="19" r="2" />
+      <path d="M9.8 10.3 6.2 6.4M14.2 10.3l3.6-3.9M14.4 13.7l3.6 3.9" />
+    </svg>
+  );
+}
+
+/** Libreria: lo sfoglia per cartella e anno. */
+export function LibraryIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 4v16M9 4v16M14.2 4.6l4.6 15.2" />
+      <path d="M2 20h20" />
+    </svg>
+  );
+}
+
+export function ArrowLeftIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M19 12H5M11 18l-6-6 6-6" />
+    </svg>
+  );
+}
+
 export function SpinnerIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...props} className={`animate-spin ${props.className ?? ""}`}>
