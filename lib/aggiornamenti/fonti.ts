@@ -195,12 +195,18 @@ export function parseElenco(html: string, fonte: FonteConfig): VoceFonte[] {
     while ((m = RE_ANCORA.exec(blocco))) {
       const href = m[1];
       if (!/\/portale\/documents\//i.test(href)) continue;
+      // Solo PDF: gli allegati .doc/.xls (es. il testo del comma 361) non sono atti.
+      if (!/\.pdf(?:[/?#]|$)/i.test(decodificaEntita(href))) continue;
       const testo = testoDaHtml(m[2]);
       if (/^allegat/i.test(testo)) continue;
       principale = { href, testo };
       break;
     }
     if (!principale) continue;
+
+    // Blocchi di servizio della pagina ("Ultimi provvedimenti del Direttore...",
+    // "Ultimo aggiornamento: <data>"): hanno una data ma non sono atti.
+    if (/^ultim[io]\b/i.test(titoloAttr) || /ultimo aggiornamento/i.test(`${titoloAttr} ${strong}`)) continue;
 
     const estremi = [titoloAttr, strong].filter(Boolean).join(" · ");
     const data = parseData(titoloAttr) ?? parseData(strong);

@@ -282,7 +282,9 @@ export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<Rapp
       const meta = valutaMetadati(v.titoloFonte, v.oggetto);
       if (!meta.scarica) {
         rapporto.scartati++;
-        const motivo = "oggetto non pertinente al catasto (nessun termine del dominio)";
+        const motivo = meta.organizzativo
+          ? "atto organizzativo o del personale (selezioni, nomine, assunzioni): non è normativa"
+          : "oggetto non pertinente al catasto (nessun termine del dominio)";
         rapporto.voci.push({ ...base, esito: "non_pertinente", motivo });
         if (!prova) {
           await registraVoce(db, { ...base, tipo: v.tipo, numero: v.numero, data: v.data, anno: v.anno, chiave: chiaveAtto(v.tipo, v.numero, v.anno, v.data), stato: "non_pertinente", motivo, punteggio: 0 });

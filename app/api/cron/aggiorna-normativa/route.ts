@@ -68,7 +68,10 @@ async function gestisci(req: NextRequest): Promise<NextResponse> {
   }
 
   const sp = req.nextUrl.searchParams;
-  const limite = Number(sp.get("limite"));
+  // Attenzione: Number(null) === 0. Senza ?limite il limite deve restare quello
+  // predefinito, non zero (bug trovato provando la route sull'anteprima).
+  const limiteGrezzo = sp.get("limite");
+  const limite = limiteGrezzo === null || limiteGrezzo.trim() === "" ? NaN : Number(limiteGrezzo);
   const idFonti = (sp.get("fonti") ?? "")
     .split(",")
     .map((s) => s.trim())

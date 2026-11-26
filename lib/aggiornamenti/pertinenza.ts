@@ -50,7 +50,14 @@ const FORTI: Array<[string, RegExp]> = [
   ["sister", /\bsister\b/],
   ["territorio", /\bagenzia del territorio|\buffici provinciali.{0,10}territorio/],
   ["categoria catastale", /\bcategori[ae] catastal|\bcategoria [a-f] ?\/ ?\d/],
+  ["commissione censuaria", /\bcommission[ei] censuari/],
 ];
+
+/**
+ * Atti organizzativi e del personale (selezioni, assunzioni, nomine,
+ * graduatorie): citano spesso i "servizi catastali" ma non sono normativa.
+ */
+const ORGANIZZATIVI = /\b(?:selezion[ei] pubblic|assunzion|concors[oi]\b|idonei\b|graduatori|nomin[ae] (?:del|dei|della|di)\b|conferiment\w* (?:di )?incaric|interpello per|mobilita (?:volontaria|esterna)|procedura selettiva)/;
 
 /** Termini contigui al dominio: da soli non bastano, servono conferme dal testo. */
 const DEBOLI: Array<[string, RegExp]> = [
@@ -71,10 +78,13 @@ export interface EsitoMetadati {
   scarica: boolean;
   forti: string[];
   deboli: string[];
+  /** Atto organizzativo o del personale: escluso anche se cita il catasto. */
+  organizzativo?: boolean;
 }
 
 export function valutaMetadati(titolo: string, oggetto: string): EsitoMetadati {
   const t = normalizza(`${titolo} ${oggetto}`);
+  if (ORGANIZZATIVI.test(t)) return { scarica: false, forti: [], deboli: [], organizzativo: true };
   const forti = FORTI.filter(([, re]) => re.test(t)).map(([k]) => k);
   const deboli = DEBOLI.filter(([, re]) => re.test(t)).map(([k]) => k);
   return { scarica: forti.length > 0 || deboli.length > 0, forti, deboli };

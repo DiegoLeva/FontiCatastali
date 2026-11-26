@@ -94,7 +94,8 @@ const HTML: Record<string, string> = {
     ${blocco("Risoluzione n. 44 del 10 novembre 2026", "Risoluzione n. 44 del 10/11/2026", "/portale/documents/20143/3/RIS_44.pdf/fff?t=6", "Codici tributo IVA")}
   </body></html>`,
   provvedimenti: `<html><body>
-    <div class="journal-content-article " data-analytics-asset-title="Ultimi Provvedimenti del Direttore soggetti a pubblicit&amp;agrave; legale"><p><a href="/portale/documents/20143/9/legge.pdf/x">(articolo 1, comma 361, della Legge 24 dicembre 2007 n° 244)</a></p></div>
+    <div class="journal-content-article " data-analytics-asset-title="Ultimi Provvedimenti del Direttore soggetti a pubblicit&amp;agrave; legale"><p><strong>Ultimo aggiornamento: 26 novembre 2026</strong></p><p><a href="/portale/documents/20143/296042/Comma+361+doc_comma_361.doc/9e48">(articolo 1, comma 361, della Legge 24 dicembre 2007 n° 244)</a></p></div>
+    ${blocco("Provvedimento del 9 settembre 2026", "Provvedimento del 09/09/2026", "/portale/documents/20143/4/idonei_250_FT.pdf/sel?t=10", "Selezione pubblica per l&rsquo;assunzione di 250 funzionari per i servizi catastali e cartografici, estimativi e osservatorio del mercato immobiliare &ndash; Assunzione idonei")}
     ${blocco("Provvedimento del 17/11/2026", "Provvedimento del 17/11/2026", "/portale/documents/20143/4/Provv_catasto.pdf/ggg?t=7", "Modalit&agrave; di presentazione telematica degli atti di aggiornamento catastale Docfa e Pregeo")}
     ${blocco("Provvedimento del 13 novembre 2026", "Provvedimento del 13 novembre 2026", "/portale/documents/20143/4/Provv_cambi.pdf/hhh?t=8", "Accertamento delle medie dei cambi delle valute estere")}
     ${blocco("Provvedimento del 5 novembre 2026", "Provvedimento del 5 novembre 2026", "/portale/documents/20143/4/Provv_crediti.pdf/iii?t=9", "Credito d&rsquo;imposta fondazioni")}
@@ -142,12 +143,15 @@ async function main() {
   verifica(circ[1]?.url === "https://www.agenziaentrate.gov.it/portale/documents/20143/2/Circolare+n.+9.pdf/bbb", "URL assoluto senza query");
   verifica(circ[1]?.oggetto.includes("crisi d’impresa"), "oggetto decodificato");
   const prov = parseElenco(HTML.provvedimenti, FONTI[2]);
-  verifica(prov.length === 3, `intestazione scartata, 3 provvedimenti (letti ${prov.length})`);
+  verifica(prov.length === 4, `intestazione "Ultimo aggiornamento" e link .doc scartati, 4 provvedimenti (letti ${prov.length})`);
+  verifica(!prov.some((v) => /\.doc/.test(v.url)), "nessun link non-PDF tra le voci");
 
   console.log("\n# Pertinenza");
   const m1 = valutaMetadati("Provvedimento", "Modalità di presentazione degli atti di aggiornamento catastale Docfa e Pregeo");
   verifica(m1.scarica && m1.forti.length >= 2, "metadati catastali -> scarica");
   verifica(!valutaMetadati("Circolare n. 8", "Concordato preventivo biennale").scarica, "metadati fiscali -> non scarica");
+  const hr = valutaMetadati("Provvedimento", "Selezione pubblica per l'assunzione di funzionari per i servizi catastali e cartografici - Assunzione idonei");
+  verifica(!hr.scarica && hr.organizzativo, "atto del personale con termini catastali -> escluso");
   verifica(valutaTesto("Il catasto dei fabbricati e la voltura catastale. Catasto, Docfa, rendita catastale proposta.", m1).pertinente, "testo catastale pertinente");
   verifica(!valutaTesto("Codici tributo per i versamenti F24 delle ritenute.", valutaMetadati("Ris", "codici tributo immobili")).pertinente, "testo fiscale non pertinente");
 
@@ -174,6 +178,18 @@ async function main() {
   verifica(secco.voci.some((v) => v.esito === "da_importare"), "il provvedimento catastale risulta da importare");
   const nTabelle = await db.execute(`SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'aggiornamenti_esecuzioni'`);
   verifica(Number(nTabelle.rows[0].n) === 0, "la prova non ha creato tabelle");
+
+  console.log("\n# Route HTTP senza ?limite (regressione: Number(null) === 0)");
+  const { GET } = await import("../app/api/cron/aggiorna-normativa/route");
+  const { NextRequest } = await import("next/server");
+  const nonAuth = await GET(new NextRequest("http://localhost/api/cron/aggiorna-normativa"));
+  verifica(nonAuth.status === 401, `senza Authorization -> 401 (status ${nonAuth.status})`);
+  const viaRoute = await GET(
+    new NextRequest("http://localhost/api/cron/aggiorna-normativa?prova=1", { headers: { authorization: "Bearer segreto-di-prova" } })
+  );
+  const jr = (await viaRoute.json()) as { voci: Array<{ esito: string }>; prova: boolean };
+  verifica(jr.prova === true, "con Authorization e ?prova=1 -> prova a secco");
+  verifica(jr.voci.some((v) => v.esito === "da_importare") && !jr.voci.some((v) => v.esito === "rimandata"), "nessuna voce 'rimandata' senza ?limite");
 
   console.log("\n# Esecuzione reale");
   const r = await eseguiAggiornamento({ innesco: "manuale" });
