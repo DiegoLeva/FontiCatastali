@@ -129,7 +129,9 @@ export async function cercaConcetti(db: Client, concetti: Concetto[]): Promise<E
     const c = concetti[i];
     if (!c.codice || risultati[i].length === 0) continue;
     const [l, n] = c.codice.split("/");
-    const re = new RegExp(`«${l}»\\s*\\/\\s*«0?${Number(n)}»`, "i");
+    // FTS5 evidenzia la FRASE intera («F/3»), non i singoli token («F»/«3»):
+    // la regex accetta entrambe le forme e richiede la barra tra i due.
+    const re = new RegExp(`«\\s*${l}\\s*(?:»\\s*)?\\/\\s*(?:«\\s*)?0?${Number(n)}\\s*»`, "i");
     const ids = risultati[i].map((r) => r.id);
     const validi = new Set<number>();
     await aLotti(ids, 400, async (lotto) => {

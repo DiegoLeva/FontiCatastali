@@ -166,6 +166,16 @@ async function main() {
   const f3 = ev3.find((e) => e.tipo === "fine") as { nuoveFonti?: number } | undefined;
   verifica(f3?.nuoveFonti === 1, `segnalata 1 nuova fonte pertinente (${f3?.nuoveFonti})`);
 
+  console.log("\n# Codici di categoria (verifica della barra su FTS5 reale)");
+  await db.execute({ sql: `INSERT INTO documenti (id, cartella_origine, nuovo_nome_file, anno, titolo, tema, testo_estratto) VALUES (21, '02 - Circolari', 'c.pdf', 2010, 'Circ. 4 - Unita in corso di costruzione', '', 'Le unita censite in categoria F/3 sono prive di rendita fino all''ultimazione.')`, args: [] });
+  await db.execute({ sql: `INSERT INTO documenti (id, cartella_origine, nuovo_nome_file, anno, titolo, tema, testo_estratto) VALUES (22, '02 - Circolari', 'd.pdf', 2011, 'Circ. 5 - Altro', '', 'Si veda la lettera f) 3. del regolamento sulle imposte.')`, args: [] });
+  const { espandiArgomento } = await import("../lib/studio/espansione");
+  const { cercaConcetti } = await import("../lib/studio/recupero");
+  const pianoF3 = espandiArgomento("Categoria F/3");
+  const rF3 = await cercaConcetti(db, pianoF3.concetti.filter((c) => c.codice === "f/3"));
+  verifica(rF3.candidati.has(21), "F/3 nel testo riconosciuto (evidenziazione «F/3» di FTS5)");
+  verifica(!rF3.candidati.has(22) && rF3.scartatiCodice >= 1, "\"lettera f) 3.\" scartata dalla verifica della barra");
+
   console.log("\n# Validazione e limiti");
   const bad = await POST(richiesta({ argomento: " " }));
   verifica(bad.status === 400, "argomento vuoto rifiutato (400)");
