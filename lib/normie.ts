@@ -4,8 +4,7 @@
  */
 
 import type { ChunkMetadata } from "@/lib/cloudflare";
-
-const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
+import { docUrl } from "@/lib/docs";
 
 /** Fonte cliccabile mostrata nel frontend (una per documento, deduplicata). */
 export interface NormieSource {
@@ -31,11 +30,7 @@ export interface RetrievedChunk {
   score: number;
 }
 
-function buildPdfUrl(cartella: string, nomeFile: string): string {
-  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
-    nomeFile
-  )}`;
-}
+const buildPdfUrl = docUrl;
 
 function formatAnno(anno: unknown): string {
   const n = Number(anno ?? 0);

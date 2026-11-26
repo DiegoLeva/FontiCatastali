@@ -6,17 +6,20 @@ import {
   NODO_RESIDUO,
   percorso,
 } from "@/lib/taxonomy";
+import { CACHE_CDN_LUNGA, NO_STORE } from "@/lib/http";
 import type { TopicCrumb, TopicDocsResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const revalidate = 3600;
+// Segmento dinamico + query `offset`: la route e' comunque dinamica, quindi la
+// cache si fa sulla CDN con `s-maxage` (vedi lib/http.ts).
+export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 60;
 
 function vuota(id: string, msg: string, status: number) {
   return NextResponse.json<TopicDocsResponse>(
     { id, label: "", percorso: [], totale: 0, docs: [], error: msg },
-    { status }
+    { status, headers: { "Cache-Control": status === 404 ? CACHE_CDN_LUNGA : NO_STORE } }
   );
 }
 
@@ -43,13 +46,16 @@ export async function GET(
       ? [{ id: NODO_RESIDUO, label: LABEL_RESIDUO }]
       : percorso(id).map((p) => ({ id: p.id, label: p.label }));
 
-    return NextResponse.json({
-      id,
-      label: isResiduo ? LABEL_RESIDUO : nodo!.label,
-      percorso: crumbs,
-      totale: tutti.length,
-      docs: tutti.slice(offset, offset + PAGE_SIZE),
-    });
+    return NextResponse.json(
+      {
+        id,
+        label: isResiduo ? LABEL_RESIDUO : nodo!.label,
+        percorso: crumbs,
+        totale: tutti.length,
+        docs: tutti.slice(offset, offset + PAGE_SIZE),
+      },
+      { headers: { "Cache-Control": CACHE_CDN_LUNGA } }
+    );
   } catch (err) {
     console.error(`[/api/topics/${id}] errore:`, err);
     return vuota(id, "Impossibile caricare i documenti.", 500);

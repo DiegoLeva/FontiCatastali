@@ -7,6 +7,8 @@ import {
   MARK_START,
   MARK_END,
 } from "@/lib/fts";
+import { docUrl, fmtAnno } from "@/lib/docs";
+import { CACHE_CDN_BREVE, NO_STORE } from "@/lib/http";
 import type { FileHit, FolderGroup, SearchResponse } from "@/lib/types";
 
 // @libsql/client richiede il runtime Node (non Edge).
@@ -14,7 +16,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_RESULTS = 300;
-const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
+/** Oltre questa lunghezza una query non e' una ricerca ma un incolla di testo. */
+const MAX_QUERY_LEN = 200;
+/**
+ * La ricerca esatta scansiona il testo integrale di ogni documento (instr):
+ * con 1-2 caratteri restituirebbe quasi tutto il corpus a costo pieno.
+ */
+const MIN_EXACT_LEN = 3;
 
 /** Ricerca FTS5 (default): tokenizzata, accent-insensitive, con snippet+bm25. */
 const FTS_SQL = `
@@ -47,17 +55,6 @@ const EXACT_SQL = `
   LIMIT ${MAX_RESULTS};
 `;
 
-function buildFileUrl(cartella: string, nomeFile: string): string {
-  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
-    nomeFile
-  )}`;
-}
-
-function formatAnno(anno: unknown): string {
-  const n = typeof anno === "bigint" ? Number(anno) : Number(anno ?? 0);
-  return n > 0 ? String(n).padStart(4, "0") : "0000";
-}
-
 function rowToHit(row: Record<string, unknown>, snippetHtml: string): FileHit {
   const cartella = String(row.cartella ?? "");
   const nomeFile = String(row.nomeFile ?? "");
@@ -66,8 +63,8 @@ function rowToHit(row: Record<string, unknown>, snippetHtml: string): FileHit {
     cartella,
     nomeFile,
     titolo: String(row.titolo ?? ""),
-    anno: formatAnno(row.anno),
-    url: buildFileUrl(cartella, nomeFile),
+    anno: fmtAnno(row.anno),
+    url: docUrl(cartella, nomeFile),
     snippetHtml,
   };
 }
@@ -84,16 +81,23 @@ function groupByFolder(hits: FileHit[]): FolderGroup[] {
     .sort((a, b) => b.count - a.count || a.cartella.localeCompare(b.cartella));
 }
 
+function vuota(q: string, status = 200, error?: string) {
+  return NextResponse.json<SearchResponse>(
+    { query: q, total: 0, tookMs: 0, groups: [], ...(error ? { error } : {}) },
+    { status, headers: { "Cache-Control": status === 200 ? CACHE_CDN_BREVE : NO_STORE } }
+  );
+}
+
 export async function GET(
   req: NextRequest
 ): Promise<NextResponse<SearchResponse>> {
-  const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
+  const q = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0, MAX_QUERY_LEN);
   const exact = req.nextUrl.searchParams.get("exact") === "1";
 
-  // In modalita' FTS servono almeno 2 caratteri utili; in esatta basta 1.
+  // In modalita' FTS servono almeno 2 caratteri utili; in esatta almeno 3.
   const match = exact ? q : buildMatchQuery(q);
-  if (!q || (!exact && !match)) {
-    return NextResponse.json({ query: q, total: 0, tookMs: 0, groups: [] });
+  if (!q || (!exact && !match) || (exact && q.length < MIN_EXACT_LEN)) {
+    return vuota(q);
   }
 
   const t0 = Date.now();
@@ -113,12 +117,17 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({
-      query: q,
-      total: hits.length,
-      tookMs: Date.now() - t0,
-      groups: groupByFolder(hits),
-    });
+    return NextResponse.json(
+      {
+        query: q,
+        total: hits.length,
+        tookMs: Date.now() - t0,
+        groups: groupByFolder(hits),
+      },
+      // La stessa query restituisce lo stesso risultato finche' il corpus non
+      // cambia: la CDN risponde alle ricerche ripetute senza toccare Turso.
+      { headers: { "Cache-Control": CACHE_CDN_BREVE } }
+    );
   } catch (err) {
     console.error("[/api/search] errore:", err);
     return NextResponse.json(
@@ -129,7 +138,7 @@ export async function GET(
         groups: [],
         error: "Errore durante la ricerca. Riprova.",
       },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": NO_STORE } }
     );
   }
 }

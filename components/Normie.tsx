@@ -166,8 +166,8 @@ function SourceButtons({ sources }: { sources: NormieSource[] }) {
 
 /* ------------------------------ Componente ------------------------------ */
 
-export function Normie() {
-  const [open, setOpen] = useState(false);
+export function Normie({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [messages, setMessages] = useState<ChatMsg[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -191,7 +191,7 @@ export function Normie() {
     if (catFetched.current) return;
     catFetched.current = true;
     try {
-      const res = await fetch("/api/catalog");
+      const res = await fetch("/api/categorie");
       const data = (await res.json()) as {
         categorie?: Array<{ cartella: string }>;
       };
@@ -339,7 +339,7 @@ export function Normie() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end sm:bottom-6 sm:right-6">
+    <div className="fixed bottom-4 right-3 z-50 flex flex-col items-end print:hidden sm:bottom-6 sm:right-6">
       {/* Finestra chat */}
       <AnimatePresence>
         {open && (
@@ -352,7 +352,7 @@ export function Normie() {
             style={{ transformOrigin: "bottom right" }}
             role="dialog"
             aria-label="Chat con Normie"
-            className="mb-3 flex h-[min(70vh,560px)] w-[min(92vw,400px)] flex-col overflow-hidden rounded-ds-lg border border-hairline bg-canvas shadow-ds-lg"
+            className="mb-3 flex h-[min(78dvh,620px)] w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-ds-lg border border-hairline bg-canvas shadow-ds-lg sm:h-[min(70vh,560px)] sm:w-[400px]"
           >
             {/* Header */}
             <header className="flex flex-none items-center gap-2.5 border-b border-hairline bg-canvas-soft px-4 py-3">
@@ -465,7 +465,7 @@ export function Normie() {
                         <select
                           value={categoria}
                           onChange={(e) => setCategoria(e.target.value)}
-                          className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-[13px] text-ink focus:border-link focus:outline-none"
+                          className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-base text-ink focus:border-link focus:outline-none sm:text-[13px]"
                         >
                           <option value="">Tutte le categorie</option>
                           {categorie.map((c) => (
@@ -489,7 +489,7 @@ export function Normie() {
                             value={annoDa}
                             onChange={(e) => setAnnoDa(e.target.value)}
                             placeholder="Da"
-                            className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-[13px] text-ink placeholder:text-mute focus:border-link focus:outline-none"
+                            className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-base text-ink placeholder:text-mute focus:border-link focus:outline-none sm:text-[13px]"
                           />
                           <span className="text-mute" aria-hidden>
                             –
@@ -502,7 +502,7 @@ export function Normie() {
                             value={annoA}
                             onChange={(e) => setAnnoA(e.target.value)}
                             placeholder="A"
-                            className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-[13px] text-ink placeholder:text-mute focus:border-link focus:outline-none"
+                            className="w-full rounded-ds border border-hairline bg-canvas px-2 py-1.5 text-base text-ink placeholder:text-mute focus:border-link focus:outline-none sm:text-[13px]"
                           />
                         </div>
                       </div>
@@ -519,7 +519,7 @@ export function Normie() {
                   onKeyDown={onKeyDown}
                   rows={1}
                   placeholder="Scrivi la tua domanda…"
-                  className="max-h-28 flex-1 resize-none bg-transparent text-[14px] text-ink placeholder:text-mute focus:outline-none"
+                  className="max-h-28 flex-1 resize-none bg-transparent text-base text-ink placeholder:text-mute focus:outline-none sm:text-[14px]"
                 />
                 <button
                   type="submit"

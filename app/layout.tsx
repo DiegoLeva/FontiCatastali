@@ -4,7 +4,11 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FontiCatastali — Ricerca normativa catastale",
+  metadataBase: new URL("https://fonti-catastali.vercel.app"),
+  title: {
+    default: "FontiCatastali — Ricerca normativa catastale",
+    template: "%s · FontiCatastali",
+  },
   description:
     "Motore di ricerca full-text sulla normativa catastale italiana: circolari, risoluzioni, provvedimenti, sentenze e altro.",
 };

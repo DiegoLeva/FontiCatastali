@@ -10,7 +10,8 @@
     "topics": "tsx scripts/build-topics.ts",
     "start": "next start",
     "lint": "next lint",
-    "upload:docs": "node scripts/upload-blob.mjs"
+    "upload:docs": "node scripts/upload-blob.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

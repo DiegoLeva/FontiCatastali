@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getIndice } from "@/lib/classify";
 import { TASSONOMIA, type TaxNode } from "@/lib/taxonomy";
 import type { TopicNode, TopicsResponse } from "@/lib/types";
+import { CACHE_CDN_LUNGA, NO_STORE } from "@/lib/http";
 
 export const runtime = "nodejs";
 // L'albero cambia solo quando si rigenera l'indice, cioe' a ogni deploy:
@@ -40,13 +41,18 @@ export async function GET(): Promise<NextResponse<TopicsResponse>> {
       .filter((a): a is TopicNode => a !== null)
       .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
 
-    return NextResponse.json({
-      totale: idx.totale,
-      classificati: idx.classificati,
-      residuo: idx.totale - idx.classificati,
-      nodiVuoti: vuoti,
-      aree,
-    });
+    return NextResponse.json(
+      {
+        totale: idx.totale,
+        classificati: idx.classificati,
+        residuo: idx.totale - idx.classificati,
+        nodiVuoti: vuoti,
+        aree,
+      },
+      // Esplicito anche se la route e' statica (ISR): se diventa dinamica la
+      // CDN continua comunque a servirla senza invocare la funzione.
+      { headers: { "Cache-Control": CACHE_CDN_LUNGA } }
+    );
   } catch (err) {
     console.error("[/api/topics] errore:", err);
     return NextResponse.json(
@@ -58,7 +64,7 @@ export async function GET(): Promise<NextResponse<TopicsResponse>> {
         aree: [],
         error: "Impossibile costruire la mappa degli argomenti.",
       },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": NO_STORE } }
     );
   }
 }

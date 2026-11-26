@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { docUrl, fmtAnno } from "@/lib/docs";
+import { CACHE_CDN_LUNGA, NO_STORE } from "@/lib/http";
 import type {
   CatalogCategory,
   CatalogResponse,
@@ -7,11 +9,11 @@ import type {
 } from "@/lib/types";
 
 export const runtime = "nodejs";
+// Resta dinamica (nessuna query al DB durante il build, che non deve dipendere
+// da Turso), ma la risposta porta `s-maxage`: la CDN la serve per un'ora e la
+// rinnova in background. Prima `force-dynamic` annullava il `revalidate` e ogni
+// apertura di "Sfoglia per cartella" rileggeva da Turso tutti i 2187 documenti.
 export const dynamic = "force-dynamic";
-// Il catalogo cambia di rado: cache CDN 1h (riduce le letture su Turso).
-export const revalidate = 3600;
-
-const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
 
 const CATALOG_SQL = `
   SELECT id, cartella_origine AS cartella, anno,
@@ -19,17 +21,6 @@ const CATALOG_SQL = `
   FROM documenti
   ORDER BY cartella_origine ASC, anno DESC, titolo ASC;
 `;
-
-function url(cartella: string, nomeFile: string): string {
-  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
-    nomeFile
-  )}`;
-}
-
-function fmtAnno(a: unknown): string {
-  const n = typeof a === "bigint" ? Number(a) : Number(a ?? 0);
-  return n > 0 ? String(n).padStart(4, "0") : "0000";
-}
 
 export async function GET(): Promise<NextResponse<CatalogResponse>> {
   try {
@@ -51,7 +42,7 @@ export async function GET(): Promise<NextResponse<CatalogResponse>> {
         titolo: String(row.titolo ?? ""),
         anno,
         nomeFile,
-        url: url(cartella, nomeFile),
+        url: docUrl(cartella, nomeFile),
       });
     }
 
@@ -68,12 +59,15 @@ export async function GET(): Promise<NextResponse<CatalogResponse>> {
       })
       .sort((a, b) => a.cartella.localeCompare(b.cartella));
 
-    return NextResponse.json({ total: rs.rows.length, categorie });
+    return NextResponse.json(
+      { total: rs.rows.length, categorie },
+      { headers: { "Cache-Control": CACHE_CDN_LUNGA } }
+    );
   } catch (err) {
     console.error("[/api/catalog] errore:", err);
     return NextResponse.json(
       { total: 0, categorie: [], error: "Errore nel catalogo." },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": NO_STORE } }
     );
   }
 }

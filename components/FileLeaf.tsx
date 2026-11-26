@@ -23,16 +23,18 @@ export function FileLeaf({ hit }: { hit: FileHit }) {
       <div className="flex items-start gap-3">
         <DocIcon className="mt-0.5 h-4 w-4 shrink-0 text-mute group-hover/leaf:text-link" />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="truncate text-[13.5px] font-medium tracking-[-0.01em] text-ink group-hover/leaf:text-link">
+          <div className="flex items-start gap-2">
+            {/* Due righe e a capo sulle parole lunghe: su smartphone un titolo
+                troncato a una riga non lascia capire di che atto si tratta. */}
+            <h4 className="line-clamp-2 min-w-0 break-words text-[13.5px] font-medium leading-snug tracking-[-0.01em] text-ink group-hover/leaf:text-link">
               {title}
             </h4>
             {hit.anno !== "0000" && (
-              <span className="shrink-0 rounded-full border border-hairline bg-canvas-soft px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-mute">
+              <span className="mt-px shrink-0 rounded-full border border-hairline bg-canvas-soft px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-mute">
                 {hit.anno}
               </span>
             )}
-            <ExternalIcon className="ml-auto h-3.5 w-3.5 shrink-0 text-mute opacity-0 transition group-hover/leaf:opacity-100" />
+            <ExternalIcon className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-mute opacity-0 transition group-hover/leaf:opacity-100" />
           </div>
           <div className="mt-1.5">
             <HighlightedSnippet html={hit.snippetHtml} />

@@ -52,10 +52,10 @@ function DocRow({ doc, i }: { doc: CatalogDoc; i: number }) {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, delay: Math.min(i * 0.012, 0.25) }}
-      className="group/doc flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 transition hover:border-hairline hover:bg-canvas-soft"
+      className="group/doc flex items-start gap-3 rounded-lg border border-transparent px-3 py-2.5 transition hover:border-hairline hover:bg-canvas-soft"
     >
-      <DocIcon className="h-3.5 w-3.5 shrink-0 text-mute group-hover/doc:text-link" />
-      <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink group-hover/doc:text-link">
+      <DocIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mute group-hover/doc:text-link" />
+      <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13.5px] leading-snug text-ink group-hover/doc:text-link">
         {label}
       </span>
       {doc.anno !== "0000" && (

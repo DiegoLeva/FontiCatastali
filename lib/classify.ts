@@ -18,12 +18,18 @@
  */
 
 import { getDb } from "./db";
+import { docUrl, fmtAnno as fmtAnnoDoc } from "./docs";
 import { NODI, NODO_RESIDUO } from "./taxonomy";
 import precalcolato from "./topics-index.json";
 import type { CatalogDoc } from "./types";
 
-const DOCS_BASE_URL = process.env.NEXT_PUBLIC_DOCS_BASE_URL || "/docs";
 const CACHE_TTL_MS = 60 * 60 * 1000;
+/**
+ * Ogni quanto si ricontrolla se nel DB ci sono documenti piu' recenti
+ * dell'indice precalcolato (importati dall'aggiornamento automatico dopo il
+ * deploy). La query e' su `id > max`, quindi quasi sempre vuota e istantanea.
+ */
+const INCREMENTALE_TTL_MS = 15 * 60 * 1000;
 
 /**
  * Caratteri di `testo_estratto` usati per la classificazione. In fase di build
@@ -181,6 +187,10 @@ export interface Indice {
   /** true se i dati vengono dall'indice costruito in fase di build. */
   precalcolato: boolean;
   costruitoIl: number;
+  /** id massimo presente nell'indice (per il merge incrementale). */
+  maxId: number;
+  /** Documenti aggiunti a runtime dopo il build (merge incrementale). */
+  aggiunti: number;
 }
 
 /** [id, cartella, nomeFile, titolo, anno] — forma compatta su disco. */
@@ -196,15 +206,10 @@ export interface IndicePrecalcolato {
   nodi: Record<string, number[]>;
 }
 
-function buildUrl(cartella: string, nomeFile: string): string {
-  return `${DOCS_BASE_URL}/${encodeURIComponent(cartella)}/${encodeURIComponent(
-    nomeFile
-  )}`;
-}
+const buildUrl = docUrl;
 
 export function fmtAnno(a: unknown): string {
-  const n = typeof a === "bigint" ? Number(a) : Number(a ?? 0);
-  return n > 0 ? String(n).padStart(4, "0") : "0000";
+  return fmtAnnoDoc(a);
 }
 
 /**
@@ -225,12 +230,89 @@ function daPrecalcolato(p: IndicePrecalcolato): Indice {
     perNodo.set(nodo, indici.map((i) => docs[i]).filter(Boolean));
   }
 
+  let maxId = 0;
+  for (const d of docs) if (d.id > maxId) maxId = d.id;
+
   return {
     totale: p.totale,
     classificati: p.classificati,
     perNodo,
     precalcolato: true,
     costruitoIl: Date.now(),
+    maxId,
+    aggiunti: 0,
+  };
+}
+
+const SQL_NUOVI = `
+  SELECT id, cartella_origine AS cartella, nuovo_nome_file AS nomeFile,
+         titolo, anno, tema,
+         substr(testo_estratto, 1, ${INCIPIT_RUNTIME}) AS incipit
+  FROM documenti
+  WHERE id > ?
+  ORDER BY id
+  LIMIT 500;
+`;
+
+const ordinaDocs = (a: CatalogDoc, b: CatalogDoc) =>
+  b.anno.localeCompare(a.anno) || a.titolo.localeCompare(b.titolo);
+
+/**
+ * Merge incrementale: classifica al volo i soli documenti arrivati dopo il
+ * build (id > maxId) e li innesta nell'indice precalcolato. Le liste toccate
+ * vengono copiate, non mutate: l'indice di base resta valido per il prossimo
+ * giro. Se il DB non risponde si torna l'indice di base, mai un errore.
+ */
+async function conNuovi(base: Indice): Promise<Indice> {
+  const rs = await getDb().execute({ sql: SQL_NUOVI, args: [base.maxId] });
+  if (rs.rows.length === 0) return { ...base, costruitoIl: Date.now() };
+
+  const perNodo = new Map(base.perNodo);
+  const toccati = new Set<string>();
+  let classificati = base.classificati;
+  let maxId = base.maxId;
+
+  for (const row of rs.rows) {
+    const cartella = String(row.cartella ?? "");
+    const nomeFile = String(row.nomeFile ?? "");
+    const titolo = String(row.titolo ?? "");
+    const id = Number(row.id);
+    if (id > maxId) maxId = id;
+    const doc: CatalogDoc = {
+      id,
+      titolo,
+      anno: fmtAnno(row.anno),
+      nomeFile,
+      url: buildUrl(cartella, nomeFile),
+    };
+    const nodi = nodiDelDocumento(
+      testoDaClassificare({
+        cartella,
+        nomeFile,
+        titolo,
+        tema: String(row.tema ?? ""),
+        incipit: String(row.incipit ?? ""),
+      })
+    );
+    if (nodi.size > 0) classificati++;
+    for (const nodo of nodi.size === 0 ? [NODO_RESIDUO] : nodi) {
+      if (!toccati.has(nodo)) {
+        perNodo.set(nodo, [...(perNodo.get(nodo) ?? [])]);
+        toccati.add(nodo);
+      }
+      perNodo.get(nodo)!.push(doc);
+    }
+  }
+  for (const nodo of toccati) perNodo.get(nodo)!.sort(ordinaDocs);
+
+  return {
+    totale: base.totale + rs.rows.length,
+    classificati,
+    perNodo,
+    precalcolato: true,
+    costruitoIl: Date.now(),
+    maxId,
+    aggiunti: rs.rows.length,
   };
 }
 
@@ -248,8 +330,10 @@ async function daDatabase(): Promise<Indice> {
 
   const perNodo = new Map<string, CatalogDoc[]>();
   let classificati = 0;
+  let maxId = 0;
 
   for (const row of rs.rows) {
+    if (Number(row.id) > maxId) maxId = Number(row.id);
     const cartella = String(row.cartella ?? "");
     const nomeFile = String(row.nomeFile ?? "");
     const titolo = String(row.titolo ?? "");
@@ -280,11 +364,7 @@ async function daDatabase(): Promise<Indice> {
     }
   }
 
-  for (const lista of perNodo.values()) {
-    lista.sort(
-      (a, b) => b.anno.localeCompare(a.anno) || a.titolo.localeCompare(b.titolo)
-    );
-  }
+  for (const lista of perNodo.values()) lista.sort(ordinaDocs);
 
   return {
     totale: rs.rows.length,
@@ -292,9 +372,12 @@ async function daDatabase(): Promise<Indice> {
     perNodo,
     precalcolato: false,
     costruitoIl: Date.now(),
+    maxId,
+    aggiunti: 0,
   };
 }
 
+let base: Indice | null = null;
 let cache: Indice | null = null;
 let inFlight: Promise<Indice> | null = null;
 
@@ -302,9 +385,24 @@ export async function getIndice(): Promise<Indice> {
   // Il JSON e' generato: TypeScript ne inferisce le tuple come array larghi.
   const p = precalcolato as unknown as IndicePrecalcolato;
   if (p.generato) {
-    // Nessuna lettura dal database: costa solo la mappatura degli URL.
-    if (!cache || !cache.precalcolato) cache = daPrecalcolato(p);
-    return cache;
+    // Base: nessuna lettura dal database, costa solo la mappatura degli URL.
+    if (!base) base = daPrecalcolato(p);
+    if (cache && Date.now() - cache.costruitoIl < INCREMENTALE_TTL_MS) return cache;
+    if (inFlight) return inFlight;
+    const b = base;
+    inFlight = conNuovi(b)
+      .catch((err) => {
+        console.warn("[classify] merge incrementale non riuscito:", err?.message ?? err);
+        return { ...b, costruitoIl: Date.now() };
+      })
+      .then((idx) => {
+        cache = idx;
+        return idx;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
   }
 
   if (cache && Date.now() - cache.costruitoIl < CACHE_TTL_MS) return cache;

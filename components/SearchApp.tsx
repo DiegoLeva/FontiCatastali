@@ -37,7 +37,8 @@ export function SearchApp() {
     const term = q.trim();
     abortRef.current?.abort();
 
-    if (term.length < MIN_CHARS) {
+    // La ricerca esatta scansiona il testo integrale: almeno 3 caratteri.
+    if (term.length < (exactMode ? 3 : MIN_CHARS)) {
       setStatus("idle");
       setData(null);
       return;
@@ -100,6 +101,11 @@ export function SearchApp() {
   const hasResults = !!view && view.groups.length > 0;
   const isEmpty = status === "done" && !!view && view.groups.length === 0;
   const heroActive = status === "idle" && !data;
+  // Durante una nuova ricerca restano visibili i risultati precedenti (attenuati):
+  // lo skeleton compare solo alla prima ricerca, niente "sfarfallio" a ogni tasto.
+  const showSkeleton = status === "loading" && !data;
+  const showResults = hasResults && (status === "done" || status === "loading");
+  const refreshing = status === "loading" && !!data;
 
   return (
     <div className="relative mx-auto flex w-full max-w-3xl flex-col">
@@ -146,7 +152,7 @@ export function SearchApp() {
 
       {/* Corpo risultati — rendering condizionale diretto. */}
       <div className="mt-6">
-        {status === "loading" && (
+        {showSkeleton && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <ResultsSkeleton />
           </motion.div>
@@ -204,8 +210,11 @@ export function SearchApp() {
           </motion.div>
         )}
 
-        {status === "done" && hasResults && view && (
-          <>
+        {showResults && view && (
+          <div
+            aria-busy={refreshing}
+            className={`transition-opacity duration-150 ${refreshing ? "opacity-55" : "opacity-100"}`}
+          >
             <FilterBar
               decades={decades}
               active={activeDecades}
@@ -213,7 +222,7 @@ export function SearchApp() {
               onReset={() => setActiveDecades([])}
             />
             <ResultsTree data={view} />
-          </>
+          </div>
         )}
 
         {/* Consultazione libera, mostrata quando non si sta cercando: mappa

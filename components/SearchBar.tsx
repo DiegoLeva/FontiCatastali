@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { SearchIcon, SpinnerIcon, CloseIcon } from "./icons";
 
 interface Props {
@@ -22,8 +22,20 @@ export function SearchBar({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Focus automatico solo con puntatore preciso (desktop): su smartphone
+  // aprirebbe la tastiera al caricamento coprendo meta' della pagina.
+  useEffect(() => {
+    if (!autoFocus) return;
+    try {
+      if (window.matchMedia("(pointer: fine)").matches) inputRef.current?.focus();
+    } catch {
+      /* matchMedia non disponibile: nessun focus automatico */
+    }
+  }, [autoFocus]);
+
   return (
     <form
+      role="search"
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
@@ -43,12 +55,15 @@ export function SearchBar({
         ref={inputRef}
         type="search"
         inputMode="search"
-        autoFocus={autoFocus}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Cerca circolari, risoluzioni, sentenze…"
         aria-label="Cerca nella normativa catastale"
         enterKeyHint="search"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        maxLength={200}
         className="h-14 w-full rounded-ds border border-hairline bg-canvas pl-12 pr-12 text-base tracking-[-0.01em] text-ink shadow-ds outline-none transition
                    placeholder:text-mute
                    focus:border-link focus:shadow-focus
@@ -60,7 +75,7 @@ export function SearchBar({
           type="button"
           onClick={onClear}
           aria-label="Cancella ricerca"
-          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-mute transition hover:bg-canvas-soft-2 hover:text-ink"
+          className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-mute transition hover:bg-canvas-soft-2 hover:text-ink"
         >
           <CloseIcon className="h-4 w-4" />
         </button>

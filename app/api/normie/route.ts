@@ -20,6 +20,8 @@ import {
   type NormieResponse,
   type RetrievedChunk,
 } from "@/lib/normie";
+import { clientIp, NO_STORE } from "@/lib/http";
+import { rateLimit } from "@/lib/ratelimit";
 
 // Le chiamate REST a Cloudflare + LLM richiedono il runtime Node.
 export const runtime = "nodejs";
@@ -34,6 +36,11 @@ const MIN_SCORE = 0.3; // prefiltro cosine grezzo; la selezione fine la fa il re
 const MAX_ANSWER_TOKENS = 2000; // risposte piu' complete (analisi step-by-step)
 const MAX_QUESTION_LEN = 2000;
 const MAX_HISTORY = 4; // ultimi turni inviati al modello per continuita'
+/** Ogni turno della cronologia viene troncato: il client non e' affidabile. */
+const MAX_HISTORY_CHARS = 3000;
+/** Rate limit per IP: ogni domanda costa embedding + rerank + LLM 70B. */
+const RL_MAX = 12;
+const RL_WINDOW_MS = 5 * 60 * 1000;
 
 /** Filtri opzionali scelti dall'utente (categoria + intervallo di anni). */
 interface NormieFilters {
@@ -60,14 +67,20 @@ function buildVectorFilter(f?: NormieFilters): VectorizeFilter | undefined {
   const filter: Record<string, unknown> = {};
 
   const cats = Array.isArray(f.categorie)
-    ? f.categorie.filter((c) => typeof c === "string" && c.trim().length > 0)
+    ? f.categorie
+        .filter((c) => typeof c === "string" && c.trim().length > 0)
+        .map((c) => c.trim().slice(0, 120))
+        .slice(0, 12)
     : [];
   if (cats.length === 1) filter.cartella = { $eq: cats[0] };
   else if (cats.length > 1) filter.cartella = { $in: cats };
 
+  // Anni plausibili soltanto: un valore assurdo non deve arrivare a Vectorize.
+  const annoOk = (v: unknown) =>
+    Number.isFinite(v) && Number(v) >= 1800 && Number(v) <= 2100;
   const anno: Record<string, number> = {};
-  if (Number.isFinite(f.annoDa)) anno.$gte = Number(f.annoDa);
-  if (Number.isFinite(f.annoA)) anno.$lte = Number(f.annoA);
+  if (annoOk(f.annoDa)) anno.$gte = Number(f.annoDa);
+  if (annoOk(f.annoA)) anno.$lte = Number(f.annoA);
   if (Object.keys(anno).length > 0) filter.anno = anno;
 
   return Object.keys(filter).length > 0 ? filter : undefined;
@@ -133,12 +146,28 @@ function sanitizeHistory(history: unknown): ChatMessage[] {
         (m.role === "user" || m.role === "assistant") &&
         typeof m.content === "string"
     )
-    .slice(-MAX_HISTORY);
+    .slice(-MAX_HISTORY)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_HISTORY_CHARS) }));
 }
 
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<NormieResponse>> {
+  const rl = rateLimit(`normie:${clientIp(req)}`, RL_MAX, RL_WINDOW_MS);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        answer: "",
+        sources: [],
+        error: `Hai fatto molte domande in poco tempo. Riprova tra ${rl.retryAfter} secondi.`,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rl.retryAfter), "Cache-Control": NO_STORE },
+      }
+    );
+  }
+
   let body: NormieRequestBody;
   try {
     body = (await req.json()) as NormieRequestBody;
