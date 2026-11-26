@@ -360,10 +360,10 @@ const tagliaParole = (s: string, max: number) => {
 
 function titoloDiRipiego(d: DocMeta, schema: SchemaNome | null): string | null {
   const oggetto = d.testo.slice(0, 1500).replace(/\s+/g, " ").match(/\boggetto\s*:\s*(.{12,200}?)(?=\s+(?:destinatari|premessa|allegat|data decorrenza|ente emittente|\d\.\s)|\.\s|$)/i);
-  const candidati = [oggetto?.[1], schema?.oggetto, d.nomeFile.replace(/\.(?:pdf|doc)\b.*$/i, "").split(" - ").pop()];
+  const candidati = [oggetto?.[1], schema?.oggetto, d.nomeFile.replace(/\.(?:pdf|docx?|xlsx?|odt|rtf|txt)\b.*$/i, "").split(" - ").pop()];
   for (const c of candidati) {
     const pulito = (c ?? "")
-      .replace(/\.(?:pdf|docx?|odt|rtf)\b.*$/i, "")
+      .replace(/\.(?:pdf|docx?|odt|rtf|xlsx?|ods|pptx?|txt)\b.*$/i, "")
       .replace(/[_]+/g, " ")
       .replace(/^mod\b\.?\s+/i, "Modulo ")
       .replace(/\s+/g, " ")

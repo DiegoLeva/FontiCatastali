@@ -111,6 +111,8 @@ export interface RapportoBonifica {
   daRevisionare: number;
   modifiche: Modifica[];
   revisione: Array<{ id: number; titolo: string; cartella: string; anno: number; motivi: string[] }>;
+  /** Campione di duplicati esatti (copia -> canonico) per la verifica. */
+  esempiDuplicati: Array<{ id: number; titolo: string; di: number }>;
   durataMs: number;
   completata: boolean;
   ultimoId: number;
@@ -168,6 +170,7 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
     daRevisionare: 0,
     modifiche: [],
     revisione: [],
+    esempiDuplicati: [],
     durataMs: 0,
     completata: false,
     ultimoId: opz.daId ?? 0,
@@ -284,7 +287,10 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
   const istruzioni: InStatement[] = [];
   for (const { d, p, tipoAtto, numero, data, estremi, duplicatoDi } of elaborati) {
     r.esaminati++;
-    if (duplicatoDi) r.duplicati++;
+    if (duplicatoDi) {
+      r.duplicati++;
+      if (r.esempiDuplicati.length < 60) r.esempiDuplicati.push({ id: d.id, titolo: d.titolo, di: duplicatoDi });
+    }
     r.tipologie[tipoAtto] = (r.tipologie[tipoAtto] ?? 0) + 1;
     if (p.origineTipo === "testo") r.tipologieDaTesto++;
     if (estremi) r.conEstremi++;
