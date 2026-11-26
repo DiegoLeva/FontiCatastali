@@ -227,12 +227,13 @@ export function StudioApp() {
         }
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
-        setErrore("Connessione interrotta durante la generazione. Riprova: i passaggi già completati non vanno persi se il dossier è stato salvato.");
+        setErrore("Connessione interrotta: la generazione prosegue comunque sul server. Tra un paio di minuti riapri l'argomento (o cercalo tra i dossier già generati) per trovarlo completo.");
       }
       flushDelta();
       if (finito) setStato("fatto");
       else {
-        if (!erroreServer) setErrore((e) => e || "La generazione si è interrotta prima della fine. Riprova tra qualche istante.");
+        if (!erroreServer)
+          setErrore((e) => e || "Lo stream si è interrotto prima della fine: la generazione prosegue sul server. Riapri l'argomento tra un paio di minuti.");
         setStato("errore");
       }
     },

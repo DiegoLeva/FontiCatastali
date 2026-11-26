@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getDb } from "@/lib/db";
 import { clientIp, CACHE_CDN_MINUTO, NO_STORE } from "@/lib/http";
 import { rateLimit } from "@/lib/ratelimit";
@@ -37,43 +38,55 @@ function argomentoValido(raw: unknown): string | null {
 
 const ndjson = (e: EventoStudio) => JSON.stringify(e) + "\n";
 
-function streamDi(lavoro: (emit: (e: EventoStudio) => void, signal: AbortSignal) => Promise<void>, req: NextRequest): Response {
+/**
+ * Stream NDJSON del lavoro. Se il client si disconnette (scheda chiusa, rete
+ * persa) la generazione NON si interrompe: si smette solo di scrivere sullo
+ * stream, il dossier viene completato e salvato in cache, e l'utente lo
+ * ritrova tra i "dossier gia' generati". `waitUntil` chiede a Vercel di tenere
+ * viva la funzione fino alla fine del lavoro anche a risposta chiusa.
+ */
+function streamDi(lavoro: (emit: (e: EventoStudio) => void) => Promise<void>): Response {
   const encoder = new TextEncoder();
-  const controllo = new AbortController();
-  req.signal.addEventListener("abort", () => controllo.abort());
+  let chiuso = false;
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const emit = (e: EventoStudio) => {
+    if (chiuso || !controllerRef) return;
+    try {
+      controllerRef.enqueue(encoder.encode(ndjson(e)));
+    } catch {
+      chiuso = true; // client andato via: il lavoro prosegue in silenzio
+    }
+  };
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let chiuso = false;
-      const emit = (e: EventoStudio) => {
-        if (chiuso) return;
-        try {
-          controller.enqueue(encoder.encode(ndjson(e)));
-        } catch {
-          chiuso = true;
-        }
-      };
+    start(controller) {
+      controllerRef = controller;
       // Keep-alive: proxy e browser non chiudono la connessione durante le
       // chiamate lunghe al modello.
       const ping = setInterval(() => emit({ tipo: "ping" }), 10_000);
-      try {
-        await lavoro(emit, controllo.signal);
-      } catch (err) {
-        if (!controllo.signal.aborted) {
+      const esecuzione = lavoro(emit)
+        .catch((err) => {
           console.error("[/api/studio] errore:", err);
           emit({ tipo: "errore", messaggio: "Si è verificato un errore durante la generazione del dossier. Riprova tra qualche istante." });
-        }
-      } finally {
-        clearInterval(ping);
-        chiuso = true;
-        try {
-          controller.close();
-        } catch {
-          /* gia' chiuso */
-        }
+        })
+        .finally(() => {
+          clearInterval(ping);
+          if (!chiuso) {
+            chiuso = true;
+            try {
+              controller.close();
+            } catch {
+              /* gia' chiuso */
+            }
+          }
+        });
+      try {
+        waitUntil(esecuzione);
+      } catch {
+        /* fuori da Vercel (sviluppo, test): la promessa prosegue comunque */
       }
     },
     cancel() {
-      controllo.abort();
+      chiuso = true;
     },
   });
   return new Response(stream, {
@@ -97,7 +110,7 @@ async function rispondi(req: NextRequest, argomento: string, rigenera: boolean):
       return streamDi(async (emit) => {
         emit({ tipo: "fase", fase: "cache", messaggio: "Dossier già generato: caricato dall'archivio." });
         emit({ tipo: "fine", dossier: salvato, cache: true, nuoveFonti: nuove });
-      }, req);
+      });
     }
   }
 
@@ -117,9 +130,9 @@ async function rispondi(req: NextRequest, argomento: string, rigenera: boolean):
     );
   }
 
-  return streamDi(async (emit, signal) => {
-    await generaDossier(argomento, emit, signal);
-  }, req);
+  return streamDi(async (emit) => {
+    await generaDossier(argomento, emit);
+  });
 }
 
 export async function POST(req: NextRequest) {
