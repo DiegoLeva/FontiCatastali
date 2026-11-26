@@ -71,6 +71,14 @@ export async function generaDossier(
 ): Promise<Dossier | null> {
   const t0 = Date.now();
   const db = getDb();
+  // Budget di tempo (maxDuration = 300 s): l'analisi si ferma a 150 s (le fonti
+  // rimaste ricevono la nota automatica), la stesura a 270 s. Cosi' il client
+  // riceve sempre l'evento finale prima che Vercel termini la funzione.
+  // `signal` resta quello del client (abbandono = si smette di emettere).
+  const conScadenza = (ms: number) => {
+    const scadenza = AbortSignal.timeout(Math.max(1_000, ms - (Date.now() - t0)));
+    return signal ? AbortSignal.any([signal, scadenza]) : scadenza;
+  };
   const avvisi: string[] = [];
   let chiamateAi = 0;
   const haAi = !!(process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN);
@@ -222,7 +230,7 @@ export async function generaDossier(
           emit({ tipo: "note", note, fatte, totali: analizzate.length });
           emit({ tipo: "fase", fase: "analisi", messaggio: `Ricostruzione cronologica: ${fatte}/${analizzate.length} fonti analizzate…`, progresso: fatte / analizzate.length });
         },
-        signal
+        conScadenza(150_000)
       );
       chiamateAi += esito.chiamate;
       for (const f of analizzate) f.nota = esito.note.get(f.n);
@@ -248,7 +256,7 @@ export async function generaDossier(
   let sezioniRiuscite = 0;
 
   const pianoS: SezionePiano[] = haAi ? pianoSezioni(piano.argomento, analizzate) : [];
-  const stato = pianoS.map(() => ({ pezzi: [] as string[], finito: false, testo: "", ok: false }));
+  const stato = pianoS.map(() => ({ pezzi: [] as string[], finito: false, testo: "", parziale: "", ok: false }));
   let attivo = -1;
   const iniziate = new Set<string>();
 
@@ -289,23 +297,26 @@ export async function generaDossier(
   };
   avanza();
 
-  await inParallelo(pianoS, 4, async (s, i) => {
+  const scadenzaStesura = conScadenza(270_000);
+  await inParallelo(pianoS, 6, async (s, i) => {
     if (signal?.aborted) return;
     try {
       const r = await scriviSezione(
         s,
         (t) => {
+          stato[i].parziale += t;
           if (i === attivo) emit({ tipo: "delta", id: raggruppa(s.id), testo: t });
           else stato[i].pezzi.push(t);
         },
-        signal
+        scadenzaStesura
       );
       chiamateAi += r.chiamate;
       stato[i].testo = r.testo;
       stato[i].ok = r.testo.length > 0;
     } catch (err) {
       if (signal?.aborted) return;
-      stato[i].testo = `_Stesura di questa parte non riuscita (${(err as Error).message.slice(0, 120)}). Le fonti restano consultabili nella timeline e nell'indice: usa "Rigenera" per riprovare._`;
+      const motivo = scadenzaStesura.aborted ? "tempo massimo raggiunto" : (err as Error).message.slice(0, 120);
+      stato[i].testo = `${stato[i].parziale.trim() ? `${stato[i].parziale.trim()}\n\n` : ""}_Stesura di questa parte non completata (${motivo}). Le fonti restano consultabili nella timeline e nell'indice: usa "Rigenera" per riprovare._`;
       avvisi.push(`Una parte del dossier ("${s.titolo}${s.sottotitolo ? ` ${s.sottotitolo}` : ""}") non è stata scritta.`);
     }
     stato[i].finito = true;

@@ -208,17 +208,21 @@ export async function analizzaFonti(
   let fatte = 0;
   const gruppi = lotti(fonti);
 
-  await inParallelo(gruppi, 5, async (lotto) => {
+  await inParallelo(gruppi, 8, async (lotto) => {
     let parziali = new Map<number, NotaFonte>();
     try {
       chiamate++;
       parziali = await analizzaLotto(argomento, lotto, signal);
-    } catch (err) {
-      if (signal?.aborted) throw err;
+    } catch {
+      /* lotto non riuscito o scadenza: ripiego sotto, fonte per fonte */
     }
     // Fonti saltate dal modello: un tentativo singolo, poi la nota automatica.
     for (const f of lotto.filter((x) => !parziali.has(x.n))) {
-      if (signal?.aborted) break;
+      if (signal?.aborted) {
+        parziali.set(f.n, notaAutomatica(f));
+        automatiche++;
+        continue;
+      }
       try {
         chiamate++;
         const singola = await analizzaLotto(argomento, [f], signal);
