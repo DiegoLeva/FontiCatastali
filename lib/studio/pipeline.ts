@@ -64,6 +64,28 @@ async function espansioneAi(argomento: string, signal?: AbortSignal): Promise<st
 
 const raggruppa = (id: string) => (id.startsWith("evoluzione") ? "evoluzione" : id);
 
+/** Termini istituzionali troppo generici per caratterizzare un argomento. */
+const GENERICI = new Set([
+  "agenzia delle entrate", "agenzia del territorio", "catasto", "catasto terreni", "catasto fabbricati",
+  "catasto dei terreni", "catasto dei fabbricati", "catasto urbano", "nuovo catasto edilizio urbano",
+  "ufficio provinciale", "uffici provinciali", "ministero delle finanze", "normativa catastale",
+  "banca dati", "banca dati catastale", "servizi catastali", "documenti catastali", "modelli catastali",
+  "atti catastali", "dati catastali", "immobili", "fabbricati", "terreni", "decreto", "legge",
+  "circolare", "risoluzione", "provvedimento", "prassi", "normativa",
+]);
+const normTermine = (t: string) => t.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/\s+/g, " ").trim();
+
+/** Anni citati nel testo di una fonte (per riconoscere metadati incoerenti). */
+function annoMassimoCitato(testo: string): number {
+  const limite = new Date().getUTCFullYear() + 1;
+  let max = 0;
+  for (const m of testo.matchAll(/(?<!\d)(18[5-9]\d|19\d\d|20[0-4]\d)(?!\d)/g)) {
+    const a = Number(m[1]);
+    if (a <= limite && a > max) max = a;
+  }
+  return max;
+}
+
 export async function generaDossier(
   argomento: string,
   emit: (e: EventoStudio) => void,
@@ -112,6 +134,7 @@ export async function generaDossier(
   const esistenti = new Set(piano.concetti.map((c) => c.fts));
   const proposte: Concetto[] = [];
   for (const t of terminiAi) {
+    if (GENERICI.has(normTermine(t))) continue;
     const c = concettoDaTermine(t);
     if (c && !esistenti.has(c.fts)) {
       esistenti.add(c.fts);
@@ -119,9 +142,14 @@ export async function generaDossier(
     }
   }
   // Un termine proposto dal modello entra solo se esiste davvero nel corpus e
-  // non e' cosi' generico da pescare un terzo dei documenti.
+  // non e' generico (al massimo il 6% dei documenti): sul corpus reale il
+  // modello proponeva per "volture" anche "Agenzia delle Entrate" (418 doc).
   const conteggiAi = await inParallelo(proposte, 6, (c) => contaDocumenti(db, c.fts));
-  const validati = proposte.filter((_, i) => conteggiAi[i] > 0 && conteggiAi[i] <= versione.documenti * 0.35).slice(0, 8);
+  const tetto = Math.max(25, Math.round(versione.documenti * 0.06));
+  const validati = proposte
+    .filter((_, i) => conteggiAi[i] > 0 && conteggiAi[i] <= tetto)
+    .map((c) => ({ ...c, peso: 0.4 }))
+    .slice(0, 8);
   const concetti = [...piano.concetti, ...validati];
   if (!concetti.length) {
     emit({ tipo: "errore", messaggio: "L'argomento non contiene termini ricercabili: prova con parole più specifiche." });
@@ -133,6 +161,13 @@ export async function generaDossier(
   const recupero = await cercaConcetti(db, concetti);
   recupero.avvisi.forEach(avvisa);
   const semantica = await pSemantica;
+  // Fonti intercettate SOLO da termini proposti dal modello: rumore, a meno
+  // che anche il canale semantico non le riconosca come pertinenti.
+  const origine = new Map(concetti.map((c) => [c.etichetta, c.origine]));
+  for (const [id, c] of recupero.candidati) {
+    const soloAi = c.concetti.size > 0 && [...c.concetti.keys()].every((k) => origine.get(k) === "ai");
+    if (soloAi && (semantica.get(id) ?? 0) < 0.6) recupero.candidati.delete(id);
+  }
   const espansione: ConcettoEspanso[] = concetti.map((c) => ({
     etichetta: c.etichetta,
     espressione: c.fts,
@@ -203,6 +238,20 @@ export async function generaDossier(
   for (const f of menzioni) {
     const s = estrM.get(f.id);
     f.passaggi = s ? [s] : [];
+  }
+  // Metadati incoerenti: il testo cita anni successivi a quello registrato.
+  const dubbi: string[] = [];
+  for (const f of analizzate) {
+    const a = Number(f.anno);
+    const e = estrA.get(f.id);
+    const max = annoMassimoCitato(`${e?.incipit ?? ""} ${f.passaggi.join(" ")}`);
+    if (a > 0 && max > a + 3) {
+      f.annoDubbio = max;
+      dubbi.push(`[F${f.n}] ${f.anno}→${max}`);
+    }
+  }
+  if (dubbi.length) {
+    avvisa(`${dubbi.length} fonti hanno nel database un anno probabilmente errato (il testo cita anni successivi): ${dubbi.slice(0, 6).join(", ")}${dubbi.length > 6 ? "…" : ""}. Restano nella loro posizione, segnalate.`);
   }
 
   /* ------------------------------ 4. Analisi ------------------------------ */

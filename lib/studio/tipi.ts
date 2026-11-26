@@ -53,6 +53,12 @@ export interface FonteStudio {
   concetti: string[];
   inTitolo: boolean;
   semantica: boolean;
+  /**
+   * Anno probabilmente errato nei metadati del DB: il testo cita questo anno,
+   * successivo a quello registrato (es. una nota "del 1917" sul servizio
+   * online del 2026).
+   */
+  annoDubbio?: number;
   /** Estratti pertinenti (testo semplice, l'evidenziazione la fa il client). */
   passaggi: string[];
   nota?: NotaFonte;

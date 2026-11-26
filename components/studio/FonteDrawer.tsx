@@ -96,6 +96,11 @@ export function FonteDrawer({
                 </p>
                 <h2 className="mt-1 break-words text-[16px] font-semibold leading-snug tracking-[-0.01em] text-ink">{fonte.titolo}</h2>
                 <p className="mt-1 truncate text-[12px] text-mute">{fonte.cartella}</p>
+                {fonte.annoDubbio && (
+                  <p className="mt-1.5 rounded-md bg-[#f9cb2826] px-2 py-1 text-[12px] text-[#9a4a07] dark:text-[#f5b86a]">
+                    ⚠ Anno da verificare: il database indica {annoBreve(fonte.anno)}, ma il testo cita il {fonte.annoDubbio}.
+                  </p>
+                )}
               </div>
               <button
                 ref={chiudiRef}

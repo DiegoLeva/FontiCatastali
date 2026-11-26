@@ -43,7 +43,12 @@ function sse(pezzi: string[]): Response {
   const enc = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     start(c) {
-      for (const p of pezzi) c.enqueue(enc.encode(`data: ${JSON.stringify({ response: p })}\n\n`));
+      // Formato reale di Workers AI: delta.content e' sempre stringa, mentre
+      // `response` diventa un NUMERO sui frammenti di sole cifre (" 1949" -> 1949).
+      for (const p of pezzi) {
+        const response = /^\s*\d+\s*$/.test(p) ? Number(p) : p;
+        c.enqueue(enc.encode(`data: ${JSON.stringify({ response, choices: [{ index: 0, delta: { content: p } }] })}\n\n`));
+      }
       c.enqueue(enc.encode("data: [DONE]\n\n"));
       c.close();
     },
@@ -64,8 +69,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const prompt: string = (body.messages ?? []).map((m: { content: string }) => m.content).join("\n");
   if (body.stream) {
     const nums = [...new Set([...prompt.matchAll(/\[F(\d+)\]/g)].map((m) => Number(m[1])))];
-    const testo = `La voltura aggiorna l'intestazione catastale [F${nums[0]}]. ${nums.slice(1).map((n) => `Successivamente la fonte [F${n}] precisa la disciplina.`).join(" ")} Secondo la legge n. 4321/1999 [F999] tutto cambia.`;
-    return sse(testo.match(/.{1,40}/gs) ?? [testo]);
+    const testo = `La voltura aggiorna l'intestazione catastale [F${nums[0]}], come previsto dal regolamento del 9 luglio 1905. ${nums.slice(1).map((n) => `Successivamente la fonte [F${n}] precisa la disciplina.`).join(" ")} Secondo la legge n. 4321/1999 [F999] tutto cambia.`;
+    // Frammenti come quelli reali: le cifre arrivano da sole (" 9", " 1905").
+    return sse(testo.split(/(?=\s\d)|(?<=\d)(?=\s)/).flatMap((p) => p.match(/.{1,40}/gs) ?? [p]));
   }
   if (/termini/.test(prompt) && /terminologia/.test(prompt)) return ok({ response: { termini: ["voltura catastale", "modello 98T", "termine inesistente xyz"] } });
   const nums = [...prompt.matchAll(/^\[F(\d+)\]/gm)].map((m) => Number(m[1]));
@@ -134,6 +140,7 @@ async function main() {
   verifica(ordine.every((id) => d.sezioni.some((s) => s.id === id)), "tutte le sezioni del manuale presenti");
   const testo = d.sezioni.map((s) => s.markdown).join("\n");
   verifica(!/F999/.test(testo), "citazione inventata [F999] rimossa");
+  verifica(/del 9 luglio 1905/.test(testo) && !/luglio1905|del9/.test(testo), "spazi conservati prima dei numeri nello streaming (bug Workers AI)");
   verifica(d.verifiche.citazioniRimosse >= 1, `conteggio citazioni rimosse (${d.verifiche.citazioniRimosse})`);
   verifica(d.verifiche.riferimentiNonVerificati.some((r) => /4321/.test(r)), "legge inventata segnalata come non verificata");
   const analizzate = d.fonti.filter((f) => f.livello === "analizzata");

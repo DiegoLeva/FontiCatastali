@@ -112,6 +112,14 @@ export function Timeline({
                         <ChipCitazione n={v.n} fonte={f} onApri={onApri} />
                         <span className="text-[11.5px] text-mute">{f?.tipo}</span>
                         <span className={`rounded-full border px-1.5 py-px text-[10.5px] font-medium ${RUOLI[v.ruolo].badge}`}>{RUOLI[v.ruolo].label}</span>
+                        {f?.annoDubbio && (
+                          <span
+                            title={`Il database indica ${annoBreve(v.anno)}, ma il testo cita il ${f.annoDubbio}`}
+                            className="rounded-full border border-[#b4530940] bg-[#f9cb2826] px-1.5 py-px text-[10.5px] font-medium text-[#9a4a07] dark:text-[#f5b86a]"
+                          >
+                            anno da verificare
+                          </span>
+                        )}
                         {v.stato === "superato" && (
                           <span className={`rounded-full border px-1.5 py-px text-[10.5px] font-medium ${STATI.superato.badge}`}>{STATI.superato.label}</span>
                         )}

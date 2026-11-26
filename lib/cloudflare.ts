@@ -234,6 +234,7 @@ export interface ChatOpts {
 /** Testo della risposta: in JSON mode Workers AI puo' restituire un oggetto. */
 function testoRisposta(response: unknown): string {
   if (typeof response === "string") return response.trim();
+  if (typeof response === "number") return String(response);
   if (response && typeof response === "object") return JSON.stringify(response);
   return "";
 }
@@ -360,12 +361,17 @@ export async function chatStream(
     if (!dato || dato === "[DONE]") return;
     try {
       const j = JSON.parse(dato) as {
-        response?: string;
+        response?: string | number;
         choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
         usage?: { completion_tokens?: number };
         finish_reason?: string;
       };
-      const pezzo = j.response ?? j.choices?.[0]?.delta?.content ?? "";
+      // Workers AI restituisce `response` come NUMERO quando il frammento e'
+      // fatto di sole cifre (" 1949" -> 1949), perdendo lo spazio iniziale
+      // ("marzo1949"): si preferisce delta.content, che resta una stringa.
+      const delta = j.choices?.[0]?.delta?.content;
+      const pezzo =
+        typeof delta === "string" ? delta : typeof j.response === "string" ? j.response : j.response != null ? String(j.response) : "";
       if (pezzo) {
         testo += pezzo;
         onToken(pezzo);

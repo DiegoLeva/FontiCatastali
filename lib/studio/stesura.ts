@@ -40,6 +40,9 @@ export function scheda(f: FonteStudio): string {
     `[F${f.n}] ${anno} · ${f.tipo} · «${f.titolo}»${n?.estremi ? ` · estremi: ${n.estremi}` : ""} · ruolo: ${n?.ruolo ?? "contesto"} · stato: ${n?.stato ?? "incerto"}`,
     `  sintesi: ${n?.sintesi || "—"}`,
   ];
+  if (f.annoDubbio) {
+    righe.push(`  ATTENZIONE: l'anno ${anno} del database e' probabilmente errato (il testo cita il ${f.annoDubbio}): non usarla per datare l'evoluzione, segnala l'incongruenza se la citi.`);
+  }
   if (n?.novita) righe.push(`  novità: ${n.novita}`);
   if (n?.rinvii?.length) righe.push(`  rinvii: ${n.rinvii.join("; ")}`);
   return righe.join("\n");
