@@ -12,7 +12,9 @@
     "lint": "next lint",
     "upload:docs": "node scripts/upload-blob.mjs",
     "typecheck": "tsc --noEmit",
-    "test:aggiornamenti": "tsx scripts/test-aggiornamenti.ts"
+    "test:aggiornamenti": "tsx scripts/test-aggiornamenti.ts",
+    "test:studio": "tsx scripts/test-studio.ts",
+    "test": "npm run test:aggiornamenti && npm run test:studio"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

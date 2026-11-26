@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
+import { BetaBadge } from "./BetaBadge";
 import type { SearchResponse } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import { computeDecades, filterResponse } from "@/lib/decades";
@@ -222,6 +224,21 @@ export function SearchApp() {
               onReset={() => setActiveDecades([])}
             />
             <ResultsTree data={view} />
+            {!exact && data && data.query.trim().length >= 3 && (
+              <Link
+                href={`/studio?argomento=${encodeURIComponent(data.query.trim())}`}
+                className="group mt-6 flex items-center gap-3 rounded-ds border border-dashed border-hairline-strong bg-canvas px-4 py-3.5 text-left transition hover:border-link hover:bg-canvas-soft"
+              >
+                <span className="min-w-0 flex-1 text-[13.5px] text-body">
+                  Vuoi un dossier cronologico su{" "}
+                  <span className="font-medium text-ink">“{data.query.trim()}”</span>{" "}
+                  costruito su tutte le fonti del database?
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5 text-[13px] font-medium text-link group-hover:text-link-deep">
+                  Studio Normativo <BetaBadge />
+                </span>
+              </Link>
+            )}
           </div>
         )}
 

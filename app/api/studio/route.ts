@@ -1,0 +1,163 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getDb } from "@/lib/db";
+import { clientIp, CACHE_CDN_MINUTO, NO_STORE } from "@/lib/http";
+import { rateLimit } from "@/lib/ratelimit";
+import { chiaveArgomento, espandiArgomento, tokens, unioneFts } from "@/lib/studio/espansione";
+import { consumaQuota, dossierRecenti, leggiCache } from "@/lib/studio/cache";
+import { nuoveFontiDopo } from "@/lib/studio/recupero";
+import { generaDossier } from "@/lib/studio/pipeline";
+import type { EventoStudio } from "@/lib/studio/tipi";
+
+/**
+ * Studio Normativo (BETA).
+ *
+ *   POST /api/studio  {argomento, rigenera?}  -> stream NDJSON di EventoStudio
+ *   GET  /api/studio?recenti=1                -> dossier generati di recente
+ *   GET  /api/studio?argomento=…              -> dossier dalla cache (404 se assente)
+ *   GET  /api/studio?argomento=…&genera=1     -> come il POST (link condivisibili e prove)
+ *
+ * Le generazioni costano decine di chiamate al modello: rate limit per IP e
+ * tetto giornaliero globale. I dossier gia' in cache sono gratuiti e illimitati.
+ */
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+// Con Fluid Compute (vercel.json) 300 s sono il massimo anche sul piano Hobby.
+export const maxDuration = 300;
+
+const RL_MAX = Number(process.env.STUDIO_MAX_PER_IP || 4);
+const RL_WINDOW_MS = 10 * 60 * 1000;
+const MAX_GIORNO = Number(process.env.STUDIO_MAX_GIORNO || 80);
+
+function argomentoValido(raw: unknown): string | null {
+  const a = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (a.length < 2 || tokens(a).length === 0) return null;
+  return a;
+}
+
+const ndjson = (e: EventoStudio) => JSON.stringify(e) + "\n";
+
+function streamDi(lavoro: (emit: (e: EventoStudio) => void, signal: AbortSignal) => Promise<void>, req: NextRequest): Response {
+  const encoder = new TextEncoder();
+  const controllo = new AbortController();
+  req.signal.addEventListener("abort", () => controllo.abort());
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let chiuso = false;
+      const emit = (e: EventoStudio) => {
+        if (chiuso) return;
+        try {
+          controller.enqueue(encoder.encode(ndjson(e)));
+        } catch {
+          chiuso = true;
+        }
+      };
+      // Keep-alive: proxy e browser non chiudono la connessione durante le
+      // chiamate lunghe al modello.
+      const ping = setInterval(() => emit({ tipo: "ping" }), 10_000);
+      try {
+        await lavoro(emit, controllo.signal);
+      } catch (err) {
+        if (!controllo.signal.aborted) {
+          console.error("[/api/studio] errore:", err);
+          emit({ tipo: "errore", messaggio: "Si è verificato un errore durante la generazione del dossier. Riprova tra qualche istante." });
+        }
+      } finally {
+        clearInterval(ping);
+        chiuso = true;
+        try {
+          controller.close();
+        } catch {
+          /* gia' chiuso */
+        }
+      }
+    },
+    cancel() {
+      controllo.abort();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": NO_STORE,
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+async function rispondi(req: NextRequest, argomento: string, rigenera: boolean): Promise<Response> {
+  const db = getDb();
+  const chiave = chiaveArgomento(argomento);
+
+  // 1) Cache: istantanea, gratuita, senza limiti.
+  if (!rigenera) {
+    const salvato = await leggiCache(db, chiave);
+    if (salvato) {
+      const nuove = await nuoveFontiDopo(db, unioneFts(espandiArgomento(argomento).concetti), salvato.versioneCorpus.maxId);
+      return streamDi(async (emit) => {
+        emit({ tipo: "fase", fase: "cache", messaggio: "Dossier già generato: caricato dall'archivio." });
+        emit({ tipo: "fine", dossier: salvato, cache: true, nuoveFonti: nuove });
+      }, req);
+    }
+  }
+
+  // 2) Generazione: limiti per IP e giornaliero.
+  const rl = rateLimit(`studio:${clientIp(req)}`, RL_MAX, RL_WINDOW_MS);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: `Hai generato molti dossier in poco tempo: riprova tra ${Math.ceil(rl.retryAfter / 60)} minuti. I dossier già generati restano consultabili.` },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter), "Cache-Control": NO_STORE } }
+    );
+  }
+  const quota = await consumaQuota(db, MAX_GIORNO);
+  if (!quota.ok) {
+    return NextResponse.json(
+      { error: "È stato raggiunto il limite giornaliero di nuovi dossier (BETA). Riprova domani: i dossier già generati restano consultabili." },
+      { status: 429, headers: { "Cache-Control": NO_STORE } }
+    );
+  }
+
+  return streamDi(async (emit, signal) => {
+    await generaDossier(argomento, emit, signal);
+  }, req);
+}
+
+export async function POST(req: NextRequest) {
+  let body: { argomento?: unknown; rigenera?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Richiesta non valida." }, { status: 400, headers: { "Cache-Control": NO_STORE } });
+  }
+  const argomento = argomentoValido(body.argomento);
+  if (!argomento) {
+    return NextResponse.json({ error: "Scrivi un argomento di almeno 2 caratteri (es. «volture»)." }, { status: 400, headers: { "Cache-Control": NO_STORE } });
+  }
+  try {
+    return await rispondi(req, argomento, body.rigenera === true);
+  } catch (err) {
+    console.error("[/api/studio] errore:", err);
+    return NextResponse.json({ error: "Servizio temporaneamente non disponibile." }, { status: 500, headers: { "Cache-Control": NO_STORE } });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const sp = req.nextUrl.searchParams;
+  try {
+    if (sp.get("recenti") === "1") {
+      const recenti = await dossierRecenti(getDb(), 12);
+      return NextResponse.json({ recenti }, { headers: { "Cache-Control": CACHE_CDN_MINUTO } });
+    }
+    const argomento = argomentoValido(sp.get("argomento"));
+    if (!argomento) return NextResponse.json({ error: "Argomento mancante." }, { status: 400, headers: { "Cache-Control": NO_STORE } });
+    if (sp.get("genera") === "1") return await rispondi(req, argomento, sp.get("rigenera") === "1");
+    const db = getDb();
+    const salvato = await leggiCache(db, chiaveArgomento(argomento));
+    if (!salvato) return NextResponse.json({ error: "Dossier non ancora generato." }, { status: 404, headers: { "Cache-Control": NO_STORE } });
+    const nuove = await nuoveFontiDopo(db, unioneFts(espandiArgomento(argomento).concetti), salvato.versioneCorpus.maxId);
+    return NextResponse.json({ dossier: salvato, nuoveFonti: nuove }, { headers: { "Cache-Control": NO_STORE } });
+  } catch (err) {
+    console.error("[/api/studio] errore:", err);
+    return NextResponse.json({ error: "Servizio temporaneamente non disponibile." }, { status: 500, headers: { "Cache-Control": NO_STORE } });
+  }
+}

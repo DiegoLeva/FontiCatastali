@@ -141,20 +141,23 @@ extra: l'API route gira già in runtime Node.
 
 ---
 
-## 4-bis. Aggiornamento automatico
+## 4-bis. Aggiornamento automatico e Studio Normativo
 
 | Variabile | Obbligatoria | A cosa serve |
 |-----------|--------------|--------------|
 | `CRON_SECRET` | **sì** per il cron | autentica il cron del lunedì (`openssl rand -hex 32`) |
 | `AGGIORNAMENTI_WEBHOOK_URL` | no | notifica Slack/Discord/Teams di novità ed errori |
+| `CF_STUDIO_MAP_MODEL`, `CF_STUDIO_WRITE_MODEL` | no | modelli dello Studio (default `CF_LLM_MODEL`) |
+| `STUDIO_MAX_PER_IP`, `STUDIO_MAX_GIORNO` | no | limiti di generazione dei dossier (default 4/10 min, 80/giorno) |
 
 - Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
-  servono le tabelle `aggiornamenti_*`, create al primo uso.
-- Il token **Cloudflare** con soli permessi di lettura basta per Normie; per indicizzare in Normie anche gli atti importati dal cron servono
-  **Vectorize Edit** e **D1 Edit** (senza, la ricerca e la mappa li vedono
-  comunque; la pagina `/aggiornamenti` segnala l'arretrato).
+  servono le tabelle `aggiornamenti_*` e `studio_dossier`, create al primo uso.
+- Il token **Cloudflare** con soli permessi di lettura basta per Normie e lo
+  Studio; per indicizzare in Normie anche gli atti importati dal cron servono
+  **Vectorize Edit** e **D1 Edit** (senza, la ricerca, la mappa e lo Studio li
+  vedono comunque; la pagina `/aggiornamenti` segnala l'arretrato).
 - `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
-  (cron, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
+  (cron e Studio, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare
   `/api/cron/aggiorna-normativa` con schedule `0 5 * * 1`; da lì il pulsante
   **Run** avvia un'esecuzione manuale. Esito su `/aggiornamenti`.

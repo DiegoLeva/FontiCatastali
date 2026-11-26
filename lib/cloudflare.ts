@@ -157,6 +157,24 @@ export async function vectorSearch(
 }
 
 /**
+ * Ricerca vettoriale "leggera": solo id e punteggio (returnMetadata "none"),
+ * che su Vectorize v2 consente topK fino a 100. Gli id dei vettori sono
+ * "<docId>-<chunk>", quindi il documento si ricava dall'id stesso.
+ */
+export async function vectorSearchIds(
+  vector: number[],
+  topK: number
+): Promise<Array<{ id: string; score: number }>> {
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const indexName = requireEnv("CF_VECTORIZE_INDEX");
+  const result = await cfFetch<{ matches?: Array<{ id: string; score: number }> }>(
+    `/accounts/${accountId}/vectorize/v2/indexes/${indexName}/query`,
+    { vector, topK: Math.min(100, topK), returnMetadata: "none", returnValues: false }
+  );
+  return result?.matches ?? [];
+}
+
+/**
  * Query SQL su D1 (store autoritativo del testo completo dei chunk).
  * Usata quando il testo del chunk NON e' incluso nei metadati Vectorize
  * (metadati Vectorize hanno un limite ~10 KiB per vettore).
@@ -241,6 +259,139 @@ export async function chat(
   const text = testoRisposta(result?.response);
   if (!text) throw new Error("Risposta vuota dal modello.");
   return text;
+}
+
+/**
+ * Estrae il primo valore JSON (oggetto o array) da un testo: i modelli a
+ * volte lo avvolgono in ```json ... ``` o lo fanno precedere da una frase.
+ */
+export function estraiJson(testo: string): unknown {
+  const pulito = testo.replace(/```(?:json)?/gi, "").trim();
+  try {
+    return JSON.parse(pulito);
+  } catch {
+    /* prova a isolare il blocco */
+  }
+  const inizio = pulito.search(/[[{]/);
+  if (inizio < 0) throw new Error("Nessun JSON nella risposta del modello.");
+  const apertura = pulito[inizio];
+  const chiusura = apertura === "[" ? "]" : "}";
+  const fine = pulito.lastIndexOf(chiusura);
+  if (fine <= inizio) throw new Error("JSON incompleto nella risposta del modello.");
+  const blocco = pulito.slice(inizio, fine + 1).replace(/,\s*([\]}])/g, "$1");
+  return JSON.parse(blocco);
+}
+
+/**
+ * Chat con output JSON. Prima prova il JSON mode nativo di Workers AI
+ * (`response_format` con schema: l'output e' JSON valido per costruzione);
+ * se il modello o lo schema lo rifiutano, ripiega su una richiesta normale e
+ * ne estrae il JSON. Il chiamante valida comunque i campi.
+ */
+export async function chatJson(
+  messages: ChatMessage[],
+  schema: Record<string, unknown>,
+  opts: ChatOpts = {}
+): Promise<unknown> {
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const path = `/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`;
+  const base = {
+    messages,
+    max_tokens: opts.maxTokens ?? 1500,
+    temperature: opts.temperature ?? 0.1,
+  };
+  try {
+    const result = await cfFetch<{ response?: unknown }>(
+      path,
+      { ...base, response_format: { type: "json_schema", json_schema: schema } },
+      { timeoutMs: opts.timeoutMs, signal: opts.signal }
+    );
+    const r = result?.response;
+    if (r && typeof r === "object") return r;
+    return estraiJson(testoRisposta(r));
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    const testo = await chat(messages, { ...opts, maxTokens: base.max_tokens, temperature: base.temperature });
+    return estraiJson(testo);
+  }
+}
+
+/**
+ * Chat in streaming (SSE). Chiama `onToken` per ogni frammento e restituisce
+ * il testo completo. Gestisce sia il formato Workers AI (`{"response":"..."}`)
+ * sia quello OpenAI (`choices[0].delta.content`). `troncata` e' true se il
+ * modello si e' fermato per il limite di token (il chiamante puo' proseguire).
+ */
+export async function chatStream(
+  messages: ChatMessage[],
+  onToken: (t: string) => void,
+  opts: ChatOpts = {}
+): Promise<{ testo: string; troncata: boolean }> {
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const token = requireEnv("CF_API_TOKEN");
+  const res = await fetch(`${API_BASE}/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      stream: true,
+      max_tokens: opts.maxTokens ?? 1500,
+      temperature: opts.temperature ?? 0.2,
+    }),
+    signal: segnale({ timeoutMs: opts.timeoutMs ?? 120_000, signal: opts.signal }),
+    cache: "no-store",
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    throw new CloudflareError(`Workers AI stream: HTTP ${res.status} ${detail.slice(0, 200)}`, res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let testo = "";
+  let troncata = false;
+  let tokenUsati = 0;
+
+  const elaboraRiga = (riga: string) => {
+    const l = riga.trim();
+    if (!l.startsWith("data:")) return;
+    const dato = l.slice(5).trim();
+    if (!dato || dato === "[DONE]") return;
+    try {
+      const j = JSON.parse(dato) as {
+        response?: string;
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        usage?: { completion_tokens?: number };
+        finish_reason?: string;
+      };
+      const pezzo = j.response ?? j.choices?.[0]?.delta?.content ?? "";
+      if (pezzo) {
+        testo += pezzo;
+        onToken(pezzo);
+      }
+      const fine = j.finish_reason ?? j.choices?.[0]?.finish_reason;
+      if (fine === "length") troncata = true;
+      if (j.usage?.completion_tokens) tokenUsati = j.usage.completion_tokens;
+    } catch {
+      /* riga parziale o metadati: ignorata */
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const righe = buffer.split("\n");
+    buffer = righe.pop() ?? "";
+    for (const r of righe) elaboraRiga(r);
+  }
+  if (buffer) elaboraRiga(buffer);
+
+  // Workers AI non sempre invia finish_reason: se i token usati toccano il
+  // limite, consideriamo la risposta troncata.
+  if (!troncata && opts.maxTokens && tokenUsati >= opts.maxTokens - 2) troncata = true;
+  return { testo: testo.trim(), troncata };
 }
 
 /**

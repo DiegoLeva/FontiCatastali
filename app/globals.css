@@ -56,6 +56,40 @@
     background: var(--ink);
     color: var(--canvas);
   }
+
+  /* Stampa / "Salva come PDF" del dossier: carta bianca, testo scuro, niente
+     interfaccia (gli elementi con print:hidden spariscono). */
+  @media print {
+    @page {
+      margin: 16mm 14mm;
+    }
+    :root,
+    .dark {
+      --canvas: #ffffff;
+      --canvas-soft: #ffffff;
+      --canvas-soft-2: #f5f5f5;
+      --ink: #111111;
+      --body: #222222;
+      --mute: #555555;
+      --hairline: #dddddd;
+      --hairline-strong: #999999;
+      color-scheme: light;
+    }
+    body {
+      background: #ffffff !important;
+      font-size: 11pt;
+    }
+    h2,
+    h3 {
+      break-after: avoid-page;
+    }
+    p,
+    li,
+    blockquote {
+      orphans: 3;
+      widows: 3;
+    }
+  }
 }
 
 @layer utilities {

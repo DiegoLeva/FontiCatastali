@@ -24,9 +24,12 @@ fonticatastali/
 │  │  │  └─ [id]/route.ts     # API documenti di un nodo (paginati)
 │  │  ├─ categorie/route.ts   # cartelle con conteggi (filtri di Normie)
 │  │  ├─ cron/aggiorna-normativa/route.ts  # cron del lunedi' (CRON_SECRET)
-│  │  └─ aggiornamenti/stato/route.ts      # stato pubblico degli aggiornamenti
+│  │  ├─ aggiornamenti/stato/route.ts      # stato pubblico degli aggiornamenti
+│  │  └─ studio/route.ts      # Studio Normativo: stream NDJSON + cache
 │  ├─ aggiornamenti/page.tsx  # pagina di stato del cron
-│  ├─ globals.css             # Tailwind + stile <mark> + scrollbar
+│  ├─ studio/page.tsx         # Studio Normativo (BETA)
+│  ├─ documento/[id]/page.tsx # lettore del testo integrale (ISR)
+│  ├─ globals.css             # Tailwind + stile <mark> + scrollbar + stampa
 │  ├─ layout.tsx              # root layout, font Geist, metadata, dark mode
 │  └─ page.tsx                # pagina (server) -> monta <SearchApp/>
 ├─ components/
@@ -42,6 +45,7 @@ fonticatastali/
 │  └─ icons.tsx               # icone SVG inline (zero dipendenze)
 ├─ lib/
 │  ├─ aggiornamenti/          # cron: fonti, parser, pertinenza, PDF, import, stato
+│  ├─ studio/                 # Studio: espansione, recupero, analisi, stesura, cache
 │  ├─ docs.ts                 # URL dei documenti (bucket o URL ufficiale) + anno
 │  ├─ http.ts · ratelimit.ts  # cache CDN, IP client, rate limit
 │  ├─ db.ts                   # client Turso/libSQL (singleton)
@@ -268,6 +272,32 @@ curl -H "Authorization: Bearer $CRON_SECRET" "https://fonti-catastali.vercel.app
 Stato pubblico: pagina **`/aggiornamenti`** e JSON `GET /api/aggiornamenti/stato`.
 
 Prove locali senza rete: `npm run test:aggiornamenti`.
+
+---
+
+## 4-quater. Studio Normativo (BETA) — `/studio`
+
+L'utente scrive un argomento ("volture", "categoria F/3", "tipi mappali"…) e
+ottiene un dossier di studio cronologico costruito su **tutte** le fonti del DB.
+
+| Fase | Cosa fa | Anti-troncamento / anti-allucinazione |
+|------|---------|----------------------------------------|
+| Espansione | radici italiane (voltur*), codici di categoria (F/3), tesauro catastale, termini proposti dal modello | i termini del modello entrano solo se esistono nel corpus |
+| Ricerca | una query FTS per concetto (fino a 1500 doc ciascuna) + Vectorize | niente LIMIT bassi; leggi/decreti, fonti più antiche e più recenti entrano per garanzia |
+| Estratti | finestre di testo attorno alle occorrenze, dal testo integrale | — |
+| Analisi (map) | note strutturate per fonte (ruolo, stato, sintesi, novità, rinvii) in JSON mode, a lotti paralleli | numeri/estremi/rinvii non presenti negli estratti vengono scartati; nessuna fonte persa (ritento + nota automatica) |
+| Stesura (reduce) | capitoli separati, evoluzione per periodi da ≤12 fonti, streaming ordinato | ripresa automatica se il modello si ferma per limite; ogni periodo deve citare tutte le sue fonti |
+| Verifica | citazioni `[F n]` validate, riferimenti normativi non presenti negli estratti segnalati, lacune del DB elencate | — |
+
+Interfaccia: timeline interattiva, citazioni cliccabili con drawer (estremi,
+nota, passaggi evidenziati, lettore del testo integrale `/documento/[id]`, PDF),
+indice delle fonti filtrabile, indice dei capitoli, esportazione Markdown e
+stampa/PDF. I dossier sono salvati su Turso (`studio_dossier`): riaprirli non
+costa chiamate al modello; "Rigenera" li ricrea, e l'interfaccia avvisa quando
+nel DB sono entrate nuove fonti pertinenti.
+
+API: `POST /api/studio` (stream NDJSON) · `GET /api/studio?recenti=1` ·
+`GET /api/studio?argomento=…`. Prove locali: `npm run test:studio`.
 
 ---
 
