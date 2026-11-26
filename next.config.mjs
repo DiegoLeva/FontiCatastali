@@ -18,8 +18,9 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   experimental: {
-    // @libsql/client non va incluso nel bundle server: lasciato esterno
-    serverComponentsExternalPackages: ["@libsql/client"],
+    // @libsql/client e unpdf (pdf.js) non vanno inclusi nel bundle server:
+    // restano moduli Node esterni, tracciati da Vercel come dipendenze.
+    serverComponentsExternalPackages: ["@libsql/client", "unpdf"],
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

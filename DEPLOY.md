@@ -141,6 +141,26 @@ extra: l'API route gira già in runtime Node.
 
 ---
 
+## 4-bis. Aggiornamento automatico
+
+| Variabile | Obbligatoria | A cosa serve |
+|-----------|--------------|--------------|
+| `CRON_SECRET` | **sì** per il cron | autentica il cron del lunedì (`openssl rand -hex 32`) |
+| `AGGIORNAMENTI_WEBHOOK_URL` | no | notifica Slack/Discord/Teams di novità ed errori |
+
+- Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
+  servono le tabelle `aggiornamenti_*`, create al primo uso.
+- Il token **Cloudflare** con soli permessi di lettura basta per Normie; per indicizzare in Normie anche gli atti importati dal cron servono
+  **Vectorize Edit** e **D1 Edit** (senza, la ricerca e la mappa li vedono
+  comunque; la pagina `/aggiornamenti` segnala l'arretrato).
+- `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
+  (cron, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
+- Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare
+  `/api/cron/aggiorna-normativa` con schedule `0 5 * * 1`; da lì il pulsante
+  **Run** avvia un'esecuzione manuale. Esito su `/aggiornamenti`.
+
+---
+
 ## 5. Check post-deploy
 
 - Apri l'URL Vercel, cerca "fabbricati rurali" → albero con snippet.

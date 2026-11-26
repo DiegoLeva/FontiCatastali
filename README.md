@@ -19,11 +19,15 @@ fonticatastali/
 │  │  │  └─ route.ts          # API ricerca: FTS5 MATCH + snippet() + grouping
 │  │  ├─ catalog/
 │  │  │  └─ route.ts          # API catalogo: albero cartella -> anno -> file
-│  │  └─ topics/
-│  │     ├─ route.ts          # API argomenti: albero a 4 livelli con conteggi
-│  │     └─ [id]/route.ts     # API documenti di un nodo (paginati)
+│  │  ├─ topics/
+│  │  │  ├─ route.ts          # API argomenti: albero a 4 livelli con conteggi
+│  │  │  └─ [id]/route.ts     # API documenti di un nodo (paginati)
+│  │  ├─ categorie/route.ts   # cartelle con conteggi (filtri di Normie)
+│  │  ├─ cron/aggiorna-normativa/route.ts  # cron del lunedi' (CRON_SECRET)
+│  │  └─ aggiornamenti/stato/route.ts      # stato pubblico degli aggiornamenti
+│  ├─ aggiornamenti/page.tsx  # pagina di stato del cron
 │  ├─ globals.css             # Tailwind + stile <mark> + scrollbar
-│  ├─ layout.tsx              # root layout, font Inter, metadata, dark mode
+│  ├─ layout.tsx              # root layout, font Geist, metadata, dark mode
 │  └─ page.tsx                # pagina (server) -> monta <SearchApp/>
 ├─ components/
 │  ├─ SearchApp.tsx           # orchestratore client: debounce, fetch, stati
@@ -37,6 +41,9 @@ fonticatastali/
 │  ├─ Skeletons.tsx           # skeleton loader (shimmer)
 │  └─ icons.tsx               # icone SVG inline (zero dipendenze)
 ├─ lib/
+│  ├─ aggiornamenti/          # cron: fonti, parser, pertinenza, PDF, import, stato
+│  ├─ docs.ts                 # URL dei documenti (bucket o URL ufficiale) + anno
+│  ├─ http.ts · ratelimit.ts  # cache CDN, IP client, rate limit
 │  ├─ db.ts                   # client Turso/libSQL (singleton)
 │  ├─ taxonomy.ts             # tassonomia a 4 livelli + lessico per nodo
 │  ├─ classify.ts             # classificatore deterministico (build + riserva)
@@ -220,6 +227,47 @@ quel nodo.
 
 Lo “Sfoglia per cartella” preesistente **resta**: risponde a una domanda diversa
 (“dov'era quel file?”). I due modi convivono nel selettore sopra l'albero.
+
+---
+
+## 4-ter. Aggiornamento automatico della normativa (cron del lunedì)
+
+Ogni **lunedì alle 05:00 UTC** (06:00 ora solare / 07:00 ora legale; sul piano
+Hobby l'avvio può slittare entro l'ora) Vercel invoca
+`/api/cron/aggiorna-normativa` (`vercel.json` → `crons`).
+
+```
+fonti AdE (circolari, risoluzioni, provvedimenti ×2)
+  → parser delle pagine elenco (markup Liferay verificato il 26/11/2026)
+  → voci mai viste (registro aggiornamenti_voci)
+  → pertinenza catastale su titolo+oggetto  → download PDF → testo (unpdf)
+  → pertinenza sul testo → deduplica sul corpus (tipo/numero/anno)
+  → titolo conciso (stesso stile del corpus) → INSERT in `documenti` (+FTS)
+  → indicizzazione Normie best-effort (D1 + Vectorize)
+  → registro esecuzione (aggiornamenti_esecuzioni) + notifica opzionale
+```
+
+- **Nessun fallimento silenzioso**: ogni esecuzione lascia esito, contatori e
+  messaggio; una pagina che cambia struttura (zero voci lette) produce esito
+  `parziale`, non un finto "nessuna novità". Lo status HTTP è 500 se nessuna
+  fonte è leggibile, così l'errore compare anche nei log dei Cron Jobs.
+- **Sicurezza**: senza `CRON_SECRET` la route rifiuta tutto (fail closed).
+- **PDF**: gli atti importati non hanno copia sul bucket; `nuovo_nome_file`
+  contiene l'URL ufficiale del PDF (gestito da `lib/docs.ts → docUrl`).
+- **Riconciliazione**: se il corpus su Turso viene sovrascritto dalla pipeline
+  locale, gli atti importati (testo conservato nel registro) vengono reinseriti.
+- **Mappa degli argomenti**: i nuovi atti vi entrano senza deploy (merge
+  incrementale in `lib/classify.ts`).
+
+Avvio manuale e prova a secco:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" "https://fonti-catastali.vercel.app/api/cron/aggiorna-normativa?prova=1"
+```
+
+Stato pubblico: pagina **`/aggiornamenti`** e JSON `GET /api/aggiornamenti/stato`.
+
+Prove locali senza rete: `npm run test:aggiornamenti`.
 
 ---
 

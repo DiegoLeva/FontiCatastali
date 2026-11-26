@@ -1,6 +1,7 @@
 import { SearchApp } from "@/components/SearchApp";
 import { SiteHeader } from "@/components/SiteHeader";
 import { NormieLazy } from "@/components/NormieLazy";
+import { ArchivioStato } from "@/components/ArchivioStato";
 
 export default function HomePage() {
   return (
@@ -10,6 +11,8 @@ export default function HomePage() {
       <div className="mt-6 sm:mt-10">
         <SearchApp />
       </div>
+
+      <ArchivioStato />
 
       {/* Widget chatbot giuridico (floating, in basso a destra). */}
       <NormieLazy />

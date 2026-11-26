@@ -62,20 +62,43 @@ function requireEnv(name: string): string {
   return v;
 }
 
+/** Errore Cloudflare con lo status HTTP (403 = permesso mancante sul token). */
+export class CloudflareError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+  }
+}
+
+interface CfFetchOpts {
+  /** Corpo gia' serializzato in NDJSON (upsert Vectorize). */
+  ndjson?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+function segnale(opts: CfFetchOpts): AbortSignal {
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  return opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
+}
+
 /** fetch con timeout + gestione uniforme degli errori Cloudflare. */
 async function cfFetch<T = unknown>(
   path: string,
-  body: unknown
+  body: unknown,
+  opts: CfFetchOpts = {}
 ): Promise<T> {
   const token = requireEnv("CF_API_TOKEN");
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+      "Content-Type": opts.ndjson ? "application/x-ndjson" : "application/json",
     },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    body: opts.ndjson ? String(body) : JSON.stringify(body),
+    signal: segnale(opts),
     cache: "no-store",
   });
 
@@ -86,7 +109,7 @@ async function cfFetch<T = unknown>(
   if (!res.ok || !json?.success) {
     const detail =
       json?.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
-    throw new Error(`Cloudflare API error (${path}): ${detail}`);
+    throw new CloudflareError(`Cloudflare API error (${path}): ${detail}`, res.status);
   }
   return json.result as T;
 }
@@ -151,24 +174,71 @@ export async function d1Query<Row = Record<string, unknown>>(
   return result?.[0]?.results ?? [];
 }
 
+/** Embedding di piu' testi in una chiamata (bge-m3 accetta un array). */
+export async function embedMany(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const result = await cfFetch<{ data?: number[][] }>(
+    `/accounts/${accountId}/ai/run/${EMBEDDING_MODEL}`,
+    { text: texts }
+  );
+  const data = result?.data ?? [];
+  if (data.length !== texts.length) throw new Error("Numero di embedding inatteso dal modello.");
+  return data;
+}
+
+export interface VettoreUpsert {
+  id: string;
+  values: number[];
+  metadata?: Record<string, unknown>;
+}
+
+/** Upsert su Vectorize v2 (NDJSON). Richiede il permesso Vectorize Edit sul token. */
+export async function vectorUpsert(vectors: VettoreUpsert[]): Promise<void> {
+  if (vectors.length === 0) return;
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const indexName = requireEnv("CF_VECTORIZE_INDEX");
+  await cfFetch(
+    `/accounts/${accountId}/vectorize/v2/indexes/${indexName}/upsert`,
+    vectors.map((v) => JSON.stringify(v)).join("\n"),
+    { ndjson: true, timeoutMs: 60_000 }
+  );
+}
+
+export interface ChatOpts {
+  maxTokens?: number;
+  temperature?: number;
+  model?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+/** Testo della risposta: in JSON mode Workers AI puo' restituire un oggetto. */
+function testoRisposta(response: unknown): string {
+  if (typeof response === "string") return response.trim();
+  if (response && typeof response === "object") return JSON.stringify(response);
+  return "";
+}
+
 /**
  * Chiamata al modello linguistico (Workers AI). Non-streaming: restituiamo la
  * risposta completa cosi' il backend puo' allegare le fonti autoritative.
  */
 export async function chat(
   messages: ChatMessage[],
-  opts: { maxTokens?: number; temperature?: number; model?: string } = {}
+  opts: ChatOpts = {}
 ): Promise<string> {
   const accountId = requireEnv("CF_ACCOUNT_ID");
-  const result = await cfFetch<{ response?: string }>(
+  const result = await cfFetch<{ response?: unknown }>(
     `/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`,
     {
       messages,
       max_tokens: opts.maxTokens ?? 1024,
       temperature: opts.temperature ?? 0.2, // basso: analisi giuridica, non creativita'
-    }
+    },
+    { timeoutMs: opts.timeoutMs, signal: opts.signal }
   );
-  const text = result?.response?.trim();
+  const text = testoRisposta(result?.response);
   if (!text) throw new Error("Risposta vuota dal modello.");
   return text;
 }
