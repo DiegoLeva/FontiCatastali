@@ -112,7 +112,7 @@ export async function statoVectorize(): Promise<StatoVectorize> {
   }
   if (!i) return { ...base, queryMese, bloccateMese, motivo: `Informazioni sull'indice non disponibili (${erroreInfo || "errore"}): ricerca semantica sospesa per prudenza.` };
   const c = calcola(i, queryMese);
-  const stato = { ...base, ...i, ...c, queryMese, bloccateMese };
+  const stato = { ...base, dimensioni: i.dimensioni, vettori: i.vettori, ...c, queryMese, bloccateMese };
   if (stato.oltreQuotaConsentito) return { ...stato, consentito: true, motivo: "Guardiano disattivato (VECTORIZE_OLTRE_QUOTA=1)." };
   if (c.maxQueryMese <= queryMese) {
     return {

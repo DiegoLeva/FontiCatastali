@@ -6,6 +6,7 @@ import { generazioniOggi } from "@/lib/studio/cache";
 import { MAX_GENERAZIONI_GIORNO, TETTO_DOSSIER } from "@/lib/studio/limiti";
 import { MODELLO_ANALISI } from "@/lib/studio/analisi";
 import { MODELLO_STESURA } from "@/lib/studio/stesura";
+import { statoMetadati, type StatoMetadati } from "@/lib/metadati/bonifica";
 
 /** Stato delle risorse gratuite (neuroni di oggi, Vectorize, Studio) per pagine e API. */
 export interface StatoRisorse {
@@ -14,10 +15,11 @@ export interface StatoRisorse {
   studio: { generazioniOggi: number; maxGiorno: number; tettoDossier: number };
   ripristino: { ora: string; secondi: number };
   modelli: { llm: string; analisi: string; stesura: string; embedding: string };
+  metadati: StatoMetadati | null;
 }
 
 export async function leggiStatoRisorse(): Promise<StatoRisorse> {
-  const [ai, vectorize, generazioni] = await Promise.all([
+  const [ai, vectorize, generazioni, metadati] = await Promise.all([
     statoBudget(true),
     statoVectorize(),
     (async () => {
@@ -27,6 +29,13 @@ export async function leggiStatoRisorse(): Promise<StatoRisorse> {
         return 0;
       }
     })(),
+    (async () => {
+      try {
+        return await statoMetadati(getDb());
+      } catch {
+        return null;
+      }
+    })(),
   ]);
   return {
     ai,
@@ -34,5 +43,6 @@ export async function leggiStatoRisorse(): Promise<StatoRisorse> {
     studio: { generazioniOggi: generazioni, maxGiorno: MAX_GENERAZIONI_GIORNO, tettoDossier: TETTO_DOSSIER },
     ripristino: ripristinoQuota(),
     modelli: { llm: LLM_MODEL, analisi: MODELLO_ANALISI, stesura: MODELLO_STESURA, embedding: EMBEDDING_MODEL },
+    metadati,
   };
 }

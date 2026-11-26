@@ -86,6 +86,16 @@ export function StatoRisorseSezione({ r }: { r: StatoRisorse }) {
         )}
       </div>
 
+      {r.metadati && (
+        <div className="mt-3 border-t border-hairline pt-3 text-[13px] text-body">
+          Metadati del corpus: <span className="font-medium text-ink tabular-nums">{it(r.metadati.normalizzati)}</span> / {it(r.metadati.documenti)} documenti normalizzati
+          <span className="text-mute">
+            {" "}· {it(r.metadati.conEstremi)} con estremi · {it(r.metadati.duplicati)} duplicati esatti esclusi da ricerca e Studio · {it(r.metadati.correzioni)} correzioni di anno e titolo
+            {r.metadati.ultima ? ` · ultima bonifica ${new Date(r.metadati.ultima.avviataIl).toLocaleDateString("it-IT")}` : ""}
+          </span>
+        </div>
+      )}
+
       <p className="mt-3 font-mono text-[11px] text-mute">
         Modello: {r.modelli.llm}
         {r.modelli.analisi !== r.modelli.llm || r.modelli.stesura !== r.modelli.llm ? ` · Studio: ${r.modelli.analisi} / ${r.modelli.stesura}` : ""}

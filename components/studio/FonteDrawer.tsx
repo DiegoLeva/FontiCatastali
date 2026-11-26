@@ -120,10 +120,10 @@ export function FonteDrawer({
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATI[nota.stato].badge}`}>{STATI[nota.stato].label}</span>
                     {fonte.livello === "menzione" && <span className="rounded-full border border-hairline px-2 py-0.5 text-[11px] text-mute">Menzione</span>}
                   </div>
-                  {nota.estremi && (
+                  {(nota.estremi || fonte.estremi) && (
                     <p className="mb-2 text-[13px] text-body">
                       <span className="font-medium text-ink">Estremi: </span>
-                      {nota.estremi}
+                      {nota.estremi || fonte.estremi}
                     </p>
                   )}
                   <p className="text-[14px] leading-relaxed text-body">{nota.sintesi}</p>

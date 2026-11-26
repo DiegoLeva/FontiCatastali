@@ -1,5 +1,7 @@
 import type { Client } from "@libsql/client";
 import { conServizioAi } from "@/lib/ai/budget";
+import { assicuraSchemaMetadati, eseguiBonifica } from "@/lib/metadati/bonifica";
+import { REVISIONE_REGOLE } from "@/lib/metadati/normalizza";
 import { getDb } from "@/lib/db";
 import { chat } from "@/lib/cloudflare";
 import { FONTI, parseElenco, scaricaElenco, type FonteConfig, type VoceFonte } from "./fonti";
@@ -71,11 +73,18 @@ export interface RapportoEsecuzione {
   errori: number;
   ripristinati: number;
   indicizzati: number;
+  /** Documenti passati dalla bonifica dei metadati in questa esecuzione. */
+  metadatiNormalizzati: number;
+  /** Id dei documenti importati in questa esecuzione (watchlist, dossier). */
+  idImportati: number[];
   voci: EsitoVoceRapporto[];
   dettagliErrori: string[];
 }
 
 const MAX_TENTATIVI = 3;
+
+/** Tipologia normalizzata degli atti letti dalle fonti dell'Agenzia. */
+const TIPO_CRON: Record<string, string> = { circolare: "Circolare", risoluzione: "Risoluzione", provvedimento: "Provvedimento" };
 
 /* -------------------------------------------------------------------------- */
 /* Titolo conciso (stesso stile dei titoli del corpus)                         */
@@ -199,10 +208,13 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
     errori: 0,
     ripristinati: 0,
     indicizzati: 0,
+    metadatiNormalizzati: 0,
+    idImportati: [],
     voci: [],
     dettagliErrori: [],
   };
 
+  const notiCron = new Map<number, { tipo?: string; numero?: string | null; data?: string | null }>();
   let db: Client;
   try {
     db = getDb();
@@ -394,6 +406,8 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
           sha256: estratto.sha256,
         });
         rapporto.importati++;
+        rapporto.idImportati.push(docId);
+        notiCron.set(docId, { tipo: TIPO_CRON[v.tipo], numero, data: v.data });
         await registraVoce(db, {
           ...base, tipo: v.tipo, numero, data: v.data, anno, chiave,
           stato: "importato", motivo: valutazione.motivo, punteggio: valutazione.punteggio,
@@ -441,7 +455,27 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
       }
     }
 
-    // 7) Esito complessivo.
+    // 7) Metadati normalizzati (anni, tipologie, estremi, duplicati) dei
+    //    documenti nuovi o non ancora trattati (anche dopo una reimportazione).
+    if (!prova && Date.now() - t0 < budget) {
+      try {
+        await assicuraSchemaMetadati(db);
+        const rs = await db.execute({
+          sql: `SELECT d.id FROM documenti d LEFT JOIN documenti_meta m ON m.doc_id = d.id
+                WHERE m.doc_id IS NULL OR m.revisione < ? ORDER BY d.id LIMIT 600`,
+          args: [REVISIONE_REGOLE],
+        });
+        const ids = rs.rows.map((r) => Number(r.id));
+        if (ids.length) {
+          const b = await eseguiBonifica(db, { applica: true, ids, noti: notiCron, budgetMs: Math.max(5_000, budget - (Date.now() - t0)) });
+          rapporto.metadatiNormalizzati = b.esaminati;
+        }
+      } catch (err) {
+        rapporto.dettagliErrori.push(`normalizzazione dei metadati: ${(err as Error).message}`);
+      }
+    }
+
+    // 8) Esito complessivo.
     const fontiOk = rapporto.fonti.filter((f) => f.ok).length;
     const fontiKo = rapporto.fonti.length - fontiOk;
     if (fontiOk === 0) rapporto.esito = "errore";

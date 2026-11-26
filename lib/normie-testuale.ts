@@ -1,6 +1,7 @@
 import type { Client } from "@libsql/client";
 import { espandiArgomento, paroleSignificative, termine } from "@/lib/studio/espansione";
 import { estraiDaTesto } from "@/lib/studio/recupero";
+import { haMetadati } from "@/lib/metadati/bonifica";
 import type { RetrievedChunk } from "@/lib/normie";
 
 /**
@@ -58,10 +59,13 @@ export async function recuperoTestuale(
   }
   args.push(maxDocumenti);
 
+  const meta = await haMetadati(db);
+  if (meta) condizioni.push("m.duplicato_di IS NULL");
   const rs = await db.execute({
     sql: `SELECT d.id, d.titolo, d.cartella_origine AS cartella, d.nuovo_nome_file AS nome, d.anno,
                  substr(d.testo_estratto, 1, 160000) AS testo
           FROM documenti_fts JOIN documenti d ON d.id = documenti_fts.rowid
+          ${meta ? "LEFT JOIN documenti_meta m ON m.doc_id = d.id" : ""}
           WHERE documenti_fts MATCH ?${condizioni.length ? ` AND ${condizioni.join(" AND ")}` : ""}
           ORDER BY bm25(documenti_fts, 1.0, 8.0, 4.0) LIMIT ?`,
     args,

@@ -1,6 +1,8 @@
 import type { Client } from "@libsql/client";
 import { embed, vectorSearchIds } from "@/lib/cloudflare";
 import { prenotaQueryVectorize } from "@/lib/ai/vectorize";
+import { haMetadati } from "@/lib/metadati/bonifica";
+import { TIPO_STUDIO } from "@/lib/metadati/normalizza";
 import { docUrl, fmtAnno } from "@/lib/docs";
 import { normalizza, type Concetto } from "./espansione";
 
@@ -24,6 +26,8 @@ const SOGLIA_SEMANTICA = 0.6;
 
 export interface Candidato {
   id: number;
+  /** Estremi normalizzati dalla bonifica dei metadati (se disponibili). */
+  estremi?: string;
   concetti: Map<string, number>; // etichetta -> rank bm25 (negativo = migliore)
   pesi: number;
   rank: number;
@@ -217,20 +221,33 @@ export async function arricchisci(
   }
 
   const ids = [...candidati.keys()];
+  // Metadati normalizzati (bonifica): tipologia e estremi affidabili, e i
+  // duplicati esatti restano fuori (stesso testo gia' presente con altro id).
+  const meta = await haMetadati(db);
   await aLotti(ids, 400, async (lotto) => {
     const rs = await db.execute({
-      sql: `SELECT id, cartella_origine AS cartella, nuovo_nome_file AS nomeFile, titolo, anno
-            FROM documenti WHERE id IN (${placeholders(lotto.length)})`,
+      sql: meta
+        ? `SELECT d.id, d.cartella_origine AS cartella, d.nuovo_nome_file AS nomeFile, d.titolo, d.anno,
+                  m.tipo_atto, m.estremi, m.duplicato_di
+           FROM documenti d LEFT JOIN documenti_meta m ON m.doc_id = d.id WHERE d.id IN (${placeholders(lotto.length)})`
+        : `SELECT id, cartella_origine AS cartella, nuovo_nome_file AS nomeFile, titolo, anno
+           FROM documenti WHERE id IN (${placeholders(lotto.length)})`,
       args: lotto,
     });
     for (const r of rs.rows) {
       const c = candidati.get(Number(r.id));
       if (!c) continue;
+      if (r.duplicato_di !== null && r.duplicato_di !== undefined) {
+        candidati.delete(c.id);
+        continue;
+      }
       c.cartella = String(r.cartella ?? "");
       c.nomeFile = String(r.nomeFile ?? "");
       c.titolo = String(r.titolo ?? "") || c.nomeFile;
       c.anno = fmtAnno(r.anno);
-      c.tipo = tipoFonte(c.cartella, c.titolo);
+      const tipoAtto = r.tipo_atto ? String(r.tipo_atto) : "";
+      c.tipo = TIPO_STUDIO[tipoAtto] ?? tipoFonte(c.cartella, c.titolo);
+      if (r.estremi) c.estremi = String(r.estremi);
     }
     return [];
   });

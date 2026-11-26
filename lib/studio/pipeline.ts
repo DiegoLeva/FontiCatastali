@@ -254,6 +254,7 @@ async function generaDossierEntroTetto(
     cartella: c.cartella,
     tipo: c.tipo,
     url: docUrl(c.cartella, c.nomeFile),
+    ...(c.estremi ? { estremi: c.estremi } : {}),
     livello: daAnalizzare.has(c.id) ? "analizzata" : "menzione",
     punteggio: c.punteggio,
     concetti: [...c.concetti.keys()].slice(0, 8),

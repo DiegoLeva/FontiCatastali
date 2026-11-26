@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { haMetadati } from "@/lib/metadati/bonifica";
 import {
   buildMatchQuery,
   snippetToSafeHtml,
@@ -47,7 +48,8 @@ const FTS_SQL = `
   FROM top
   JOIN documenti_fts ON documenti_fts.rowid = top.rid
   JOIN documenti d ON d.id = top.rid
-  WHERE documenti_fts MATCH ?
+  /*META_JOIN*/
+  WHERE documenti_fts MATCH ? /*META_WHERE*/
   ORDER BY top.rank, d.id;
 `;
 
@@ -63,11 +65,18 @@ const EXACT_SQL = `
     substr(d.testo_estratto,
            max(1, instr(lower(d.testo_estratto), lower(?)) - 130), 320) AS snip
   FROM documenti d
-  WHERE instr(lower(d.testo_estratto), lower(?)) > 0
-     OR instr(lower(d.titolo), lower(?)) > 0
+  /*META_JOIN*/
+  WHERE (instr(lower(d.testo_estratto), lower(?)) > 0
+     OR instr(lower(d.titolo), lower(?)) > 0) /*META_WHERE*/
   ORDER BY d.anno DESC
   LIMIT ${MAX_RESULTS};
 `;
+
+/** Con la bonifica dei metadati i duplicati esatti (stesso testo) non si ripetono nei risultati. */
+const conMeta = (sql: string, meta: boolean) =>
+  meta
+    ? sql.replace("/*META_JOIN*/", "LEFT JOIN documenti_meta m ON m.doc_id = d.id").replace("/*META_WHERE*/", "AND m.duplicato_di IS NULL")
+    : sql.replace("/*META_JOIN*/", "").replace("/*META_WHERE*/", "");
 
 function rowToHit(row: Record<string, unknown>, snippetHtml: string): FileHit {
   const cartella = String(row.cartella ?? "");
@@ -120,12 +129,12 @@ export async function GET(
     let hits: FileHit[];
 
     if (exact) {
-      const rs = await db.execute({ sql: EXACT_SQL, args: [q, q, q] });
+      const rs = await db.execute({ sql: conMeta(EXACT_SQL, await haMetadati(db)), args: [q, q, q] });
       hits = rs.rows.map((row) =>
         rowToHit(row, exactSnippetHtml(String(row.snip ?? ""), q))
       );
     } else {
-      const rs = await db.execute({ sql: FTS_SQL, args: [match, match] });
+      const rs = await db.execute({ sql: conMeta(FTS_SQL, await haMetadati(db)), args: [match, match] });
       hits = rs.rows.map((row) =>
         rowToHit(row, snippetToSafeHtml(String(row.snip ?? "")))
       );

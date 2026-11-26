@@ -39,6 +39,8 @@ export interface NotaFonte {
 }
 
 export interface FonteStudio {
+  /** Estremi dell'atto dalla bonifica dei metadati (tipo, numero, data). */
+  estremi?: string;
   /** Numero di citazione: [F{n}] nel testo. Ordine cronologico. */
   n: number;
   id: number;
