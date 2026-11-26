@@ -156,6 +156,14 @@ extra: l'API route gira già in runtime Node.
   Studio; per indicizzare in Normie anche gli atti importati dal cron servono
   **Vectorize Edit** e **D1 Edit** (senza, la ricerca, la mappa e lo Studio li
   vedono comunque; la pagina `/aggiornamenti` segnala l'arretrato).
+- **Quota Workers AI**: sul piano Cloudflare *Workers Free* l'account ha
+  10.000 neuroni al giorno (azzerati alle 00:00 UTC). Un dossier dello Studio
+  ne consuma circa 7-8.000, una risposta di Normie qualche centinaio: per un
+  uso reale serve il piano **Workers Paid**. A quota esaurita (errore 4006)
+  l'app non insiste: le chiamate ai modelli si sospendono per 10 minuti,
+  Normie risponde con un messaggio di pausa (503) e lo Studio mostra fonti,
+  estratti e timeline senza capitoli, senza salvarlo in cache e senza
+  sostituire un dossier completo già salvato.
 - `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
   (cron e Studio, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare

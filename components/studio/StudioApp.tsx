@@ -65,6 +65,8 @@ export function StudioApp() {
   const [note, setNote] = useState<Map<number, NotaFonte>>(new Map());
   const [sezioni, setSezioni] = useState<SezioneViva[]>([]);
   const [avvisi, setAvvisi] = useState<string[]>([]);
+  // Avviso grave (es. quota AI esaurita): resta in evidenza sopra il dossier.
+  const [limitazione, setLimitazione] = useState("");
   const [dossier, setDossier] = useState<Dossier | null>(null);
   const [daCache, setDaCache] = useState(false);
   const [nuoveFonti, setNuoveFonti] = useState(0);
@@ -124,6 +126,7 @@ export function StudioApp() {
           setSezioni((p) => p.map((s) => (s.id === e.id ? { ...s, markdown: e.markdown, completa: true } : s)));
           break;
         case "avviso":
+          if (e.grave) setLimitazione(e.messaggio);
           setAvvisi((p) => (p.includes(e.messaggio) ? p : [...p, e.messaggio]));
           break;
         case "errore":
@@ -169,6 +172,7 @@ export function StudioApp() {
       setNote(new Map());
       setSezioni([]);
       setAvvisi([]);
+      setLimitazione("");
       setDossier(null);
       setDaCache(false);
       setNuoveFonti(0);
@@ -474,6 +478,12 @@ export function StudioApp() {
             <button onClick={() => void avvia(argomento)} className="ml-2 font-medium underline underline-offset-4">
               Riprova
             </button>
+          </div>
+        )}
+        {limitazione && (
+          <div role="status" className="rounded-ds border border-[#b4530940] bg-[#f9cb281f] px-4 py-3 text-[13.5px] leading-relaxed text-[#7a3a05] dark:text-[#f5b86a] print:hidden">
+            <span className="font-semibold">Servizio AI in pausa. </span>
+            {limitazione}
           </div>
         )}
         {daCache && dossier && (

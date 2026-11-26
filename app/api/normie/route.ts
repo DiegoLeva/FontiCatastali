@@ -5,6 +5,8 @@ import {
   rerank,
   d1Query,
   chat,
+  quotaEsaurita,
+  ripristinoQuota,
   type VectorMatch,
   type ChatMessage,
   type VectorizeFilter,
@@ -248,6 +250,19 @@ export async function POST(
 
     return NextResponse.json({ answer, sources: citedSources });
   } catch (err) {
+    if (quotaEsaurita(err)) {
+      // Quota giornaliera di Workers AI esaurita: messaggio chiaro, niente 500.
+      const { ora, secondi } = ripristinoQuota();
+      console.warn("[/api/normie] quota giornaliera di Workers AI esaurita");
+      return NextResponse.json(
+        {
+          answer: "",
+          sources: [],
+          error: `Normie è in pausa: la quota giornaliera del servizio AI è esaurita e si azzera alle ${ora} (ora italiana). Nel frattempo puoi usare la ricerca testuale e i dossier già pronti dello Studio Normativo.`,
+        },
+        { status: 503, headers: { "Retry-After": String(secondi), "Cache-Control": NO_STORE } }
+      );
+    }
     console.error("[/api/normie] errore:", err);
     return NextResponse.json(
       {

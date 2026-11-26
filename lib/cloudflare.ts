@@ -62,15 +62,70 @@ function requireEnv(name: string): string {
   return v;
 }
 
+/** Codice Workers AI: allocazione gratuita giornaliera (10.000 neuroni) esaurita. */
+const CODICE_QUOTA = 4006;
+
 /** Errore Cloudflare con lo status HTTP (403 = permesso mancante sul token). */
 export class CloudflareError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly codice?: number
   ) {
     super(message);
   }
+
+  get quotaEsaurita(): boolean {
+    return this.codice === CODICE_QUOTA || /daily free allocation/i.test(this.message);
+  }
 }
+
+/*
+ * Quota giornaliera di Workers AI. Sul piano Workers Free l'account dispone di
+ * 10.000 neuroni al giorno, azzerati alle 00:00 UTC: esauriti quelli, OGNI
+ * chiamata ai modelli fallisce con 429/4006. Al primo errore di quota le
+ * chiamate ai modelli si sospendono per qualche minuto in questa istanza,
+ * cosi' non partono decine di richieste destinate a fallire (un dossier dello
+ * Studio ne fa ~30) e l'utente riceve subito un messaggio chiaro. La pausa e'
+ * breve di proposito: dopo il passaggio al piano Workers Paid il servizio
+ * riprende da solo. Vectorize e D1 non consumano neuroni e restano attivi.
+ */
+const PAUSA_QUOTA_MS = 10 * 60_000;
+let quotaSospesaFino = 0;
+
+/** true se in questa istanza Workers AI ha appena segnalato la quota esaurita. */
+export function quotaAiEsaurita(): boolean {
+  return Date.now() < quotaSospesaFino;
+}
+
+/** L'errore indica la quota giornaliera di Workers AI esaurita. */
+export function quotaEsaurita(err: unknown): boolean {
+  return err instanceof CloudflareError && err.quotaEsaurita;
+}
+
+/** Quando si azzera la quota (00:00 UTC): ora italiana e secondi mancanti. */
+export function ripristinoQuota(): { ora: string; secondi: number } {
+  const ora = new Date();
+  const mezzanotte = Date.UTC(ora.getUTCFullYear(), ora.getUTCMonth(), ora.getUTCDate() + 1);
+  return {
+    ora: new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" }).format(mezzanotte),
+    secondi: Math.max(60, Math.round((mezzanotte - ora.getTime()) / 1000)),
+  };
+}
+
+function controllaQuota(path: string): void {
+  if (path.includes("/ai/run/") && quotaAiEsaurita()) {
+    throw new CloudflareError("Workers AI: quota giornaliera esaurita (chiamate sospese per qualche minuto).", 429, CODICE_QUOTA);
+  }
+}
+
+function registra(err: CloudflareError): CloudflareError {
+  if (err.quotaEsaurita) quotaSospesaFino = Date.now() + PAUSA_QUOTA_MS;
+  return err;
+}
+
+type ErroriCf = Array<{ message?: string; code?: number }> | undefined;
+const codiceDi = (errors: ErroriCf) => errors?.find((e) => typeof e?.code === "number")?.code;
 
 interface CfFetchOpts {
   /** Corpo gia' serializzato in NDJSON (upsert Vectorize). */
@@ -91,6 +146,7 @@ async function cfFetch<T = unknown>(
   opts: CfFetchOpts = {}
 ): Promise<T> {
   const token = requireEnv("CF_API_TOKEN");
+  controllaQuota(path);
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
@@ -103,13 +159,13 @@ async function cfFetch<T = unknown>(
   });
 
   const json = (await res.json().catch(() => null)) as
-    | { success?: boolean; result?: T; errors?: Array<{ message: string }> }
+    | { success?: boolean; result?: T; errors?: ErroriCf }
     | null;
 
   if (!res.ok || !json?.success) {
     const detail =
       json?.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
-    throw new CloudflareError(`Cloudflare API error (${path}): ${detail}`, res.status);
+    throw registra(new CloudflareError(`Cloudflare API error (${path}): ${detail}`, res.status, codiceDi(json?.errors)));
   }
   return json.result as T;
 }
@@ -311,7 +367,7 @@ export async function chatJson(
     if (r && typeof r === "object") return r;
     return estraiJson(testoRisposta(r));
   } catch (err) {
-    if (opts.signal?.aborted) throw err;
+    if (opts.signal?.aborted || quotaEsaurita(err)) throw err;
     const testo = await chat(messages, { ...opts, maxTokens: base.max_tokens, temperature: base.temperature });
     return estraiJson(testo);
   }
@@ -330,7 +386,9 @@ export async function chatStream(
 ): Promise<{ testo: string; troncata: boolean }> {
   const accountId = requireEnv("CF_ACCOUNT_ID");
   const token = requireEnv("CF_API_TOKEN");
-  const res = await fetch(`${API_BASE}/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`, {
+  const path = `/accounts/${accountId}/ai/run/${opts.model ?? LLM_MODEL}`;
+  controllaQuota(path);
+  const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -344,7 +402,13 @@ export async function chatStream(
   });
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => "");
-    throw new CloudflareError(`Workers AI stream: HTTP ${res.status} ${detail.slice(0, 200)}`, res.status);
+    let codice: number | undefined;
+    try {
+      codice = codiceDi((JSON.parse(detail) as { errors?: ErroriCf }).errors);
+    } catch {
+      /* corpo non JSON */
+    }
+    throw registra(new CloudflareError(`Workers AI stream: HTTP ${res.status} ${detail.slice(0, 200)}`, res.status, codice));
   }
 
   const reader = res.body.getReader();

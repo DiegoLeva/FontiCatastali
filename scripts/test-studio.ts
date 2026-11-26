@@ -58,10 +58,23 @@ function sse(pezzi: string[]): Response {
 const ok = (result: unknown) => new Response(JSON.stringify({ success: true, result }), { status: 200, headers: { "content-type": "application/json" } });
 
 let chiamateAi = 0;
+// Quota giornaliera gratuita esaurita: risposta reale di Workers AI (429/4006).
+let quotaFinita = false;
+let chiamateQuota = 0;
+const RISPOSTA_QUOTA = JSON.stringify({
+  success: false,
+  result: null,
+  messages: [],
+  errors: [{ code: 4006, message: "AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage." }],
+});
 const fetchOriginale = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (!url.startsWith("https://api.cloudflare.com/")) return fetchOriginale(input, init);
+  if (quotaFinita && url.includes("/ai/run/")) {
+    chiamateQuota++;
+    return new Response(RISPOSTA_QUOTA, { status: 429, headers: { "content-type": "application/json" } });
+  }
   const body = init?.body ? JSON.parse(String(init.body)) : {};
   if (url.includes("/vectorize/")) return ok({ matches: [{ id: "4-0", score: 0.71 }, { id: "7-1", score: 0.66 }, { id: "9-0", score: 0.4 }] });
   if (url.includes("bge-m3")) return ok({ data: (body.text as string[]).map(() => Array.from({ length: 8 }, () => 0.1)) });
@@ -175,6 +188,26 @@ async function main() {
   const rF3 = await cercaConcetti(db, pianoF3.concetti.filter((c) => c.codice === "f/3"));
   verifica(rF3.candidati.has(21), "F/3 nel testo riconosciuto (evidenziazione «F/3» di FTS5)");
   verifica(!rF3.candidati.has(22) && rF3.scartatiCodice >= 1, "\"lettera f) 3.\" scartata dalla verifica della barra");
+
+  console.log("\n# Quota giornaliera di Workers AI esaurita (errore 4006)");
+  type Fine = { cache?: boolean; dossier?: import("../lib/studio/tipi").Dossier };
+  const richiestaQ = (body: unknown) =>
+    new NextRequest("http://localhost/api/studio", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", "x-forwarded-for": "10.0.0.2" } });
+  quotaFinita = true;
+  const evQ1 = await leggi(await POST(richiestaQ({ argomento: "volture", rigenera: true })));
+  const fQ1 = evQ1.find((e) => e.tipo === "fine") as Fine | undefined;
+  verifica(evQ1.some((e) => e.tipo === "avviso" && e.grave === true && /quota/i.test(String(e.messaggio))), "avviso grave sulla quota esaurita");
+  verifica(fQ1?.cache === true && !!fQ1.dossier?.sezioni.some((s) => s.id === "inquadramento"), "\"Rigenera\" con quota esaurita: resta la versione completa salvata");
+  const evQ2 = await leggi(await POST(richiestaQ({ argomento: "intestazioni catastali" })));
+  const fQ2 = evQ2.find((e) => e.tipo === "fine") as Fine | undefined;
+  const dQ2 = fQ2?.dossier;
+  verifica(fQ2?.cache === false && (dQ2?.fonti.length ?? 0) > 0, `senza cache: fonti comunque elencate (${dQ2?.fonti.length ?? 0})`);
+  verifica(dQ2?.sezioni.length === 1 && dQ2.sezioni[0].id === "avvertenze", "nessun capitolo tentato: resta la sezione deterministica");
+  verifica(!!dQ2 && dQ2.fonti.filter((f) => f.livello === "analizzata").every((f) => f.nota?.automatica), "note estratte dal testo, senza modello");
+  verifica(chiamateQuota <= 3, `chiamate al modello sospese dopo il primo errore (${chiamateQuota} tentativi in rete per 2 dossier)`);
+  const salvatoQ2 = await GET(new NextRequest(`http://localhost/api/studio?argomento=${encodeURIComponent("intestazioni catastali")}`));
+  verifica(salvatoQ2.status === 404, "dossier senza capitoli non salvato in cache");
+  quotaFinita = false;
 
   console.log("\n# Validazione e limiti");
   const bad = await POST(richiesta({ argomento: " " }));

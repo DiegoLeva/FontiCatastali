@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/db";
-import { chatJson } from "@/lib/cloudflare";
+import { chatJson, quotaAiEsaurita, quotaEsaurita, ripristinoQuota } from "@/lib/cloudflare";
 import { concettoDaTermine, espandiArgomento, unioneFts, type Concetto } from "./espansione";
 import {
   arricchisci,
@@ -26,7 +26,7 @@ import {
   validaCitazioni,
   type SezionePiano,
 } from "./stesura";
-import { salvaCache } from "./cache";
+import { leggiCache, salvaCache } from "./cache";
 import type { ConcettoEspanso, Dossier, EventoStudio, FonteStudio, SezioneDossier, VoceTimeline } from "./tipi";
 
 /**
@@ -104,10 +104,15 @@ export async function generaDossier(
   const avvisi: string[] = [];
   let chiamateAi = 0;
   const haAi = !!(process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN);
-  const avvisa = (m: string) => {
+  const avvisa = (m: string, grave = false) => {
     avvisi.push(m);
-    emit({ tipo: "avviso", messaggio: m });
+    emit(grave ? { tipo: "avviso", messaggio: m, grave } : { tipo: "avviso", messaggio: m });
   };
+  // Quota giornaliera di Workers AI esaurita: niente analisi ne' stesura con
+  // il modello (fallirebbero tutte), ma fonti, estratti e timeline restano.
+  let aiEsaurita = false;
+  const messaggioQuota = () =>
+    `Quota giornaliera gratuita di Workers AI esaurita: fino alle ${ripristinoQuota().ora} (ora italiana), quando si azzera, il modello non può analizzare le fonti né scrivere i capitoli.`;
 
   /* ----------------------------- 1. Espansione ---------------------------- */
   const piano = espandiArgomento(argomento);
@@ -116,7 +121,8 @@ export async function generaDossier(
   const pVersione = versioneCorpus(db);
   const pSemantica = haAi
     ? cercaSemantica(`${piano.argomento}. ${piano.concetti.slice(0, 8).map((c) => c.etichetta).join(", ")}`).catch((err) => {
-        avvisa(`Ricerca semantica non disponibile (${(err as Error).message.slice(0, 80)}): uso la sola ricerca testuale.`);
+        if (quotaEsaurita(err)) aiEsaurita = true;
+        else avvisa(`Ricerca semantica non disponibile (${(err as Error).message.slice(0, 80)}): uso la sola ricerca testuale.`);
         return new Map<number, number>();
       })
     : Promise.resolve(new Map<number, number>());
@@ -126,8 +132,9 @@ export async function generaDossier(
     try {
       chiamateAi++;
       terminiAi = await espansioneAi(piano.argomento, signal);
-    } catch {
+    } catch (err) {
       /* espansione AI facoltativa */
+      if (quotaEsaurita(err)) aiEsaurita = true;
     }
   }
   const versione = await pVersione;
@@ -159,8 +166,20 @@ export async function generaDossier(
   /* ------------------------------ 2. Ricerca ------------------------------ */
   emit({ tipo: "fase", fase: "ricerca", messaggio: `Ricerca esaustiva nel database con ${concetti.length} concetti…` });
   const recupero = await cercaConcetti(db, concetti);
-  recupero.avvisi.forEach(avvisa);
+  recupero.avvisi.forEach((m) => avvisa(m));
   const semantica = await pSemantica;
+  if (aiEsaurita) {
+    // Un "Rigenera" con la quota esaurita non deve sostituire la versione
+    // completa gia' salvata con una senza capitoli: si mostra quella.
+    const salvato = await leggiCache(db, piano.chiave);
+    if (salvato) {
+      emit({ tipo: "avviso", grave: true, messaggio: `${messaggioQuota()} Ti mostro l'ultima versione completa salvata: potrai rigenerarla dopo l'azzeramento.` });
+      emit({ tipo: "fine", dossier: salvato, cache: true });
+      return salvato;
+    }
+    avvisa(`${messaggioQuota()} Qui sotto trovi comunque tutte le fonti trovate nel database (ricerca solo testuale), con estratti e timeline; il dossier completo si potrà generare dopo l'azzeramento.`, true);
+  }
+  let usaAi = haAi && !aiEsaurita;
   // Fonti intercettate SOLO da termini proposti dal modello: rumore, a meno
   // che anche il canale semantico non le riconosca come pertinenti.
   const origine = new Map(concetti.map((c) => [c.etichetta, c.origine]));
@@ -270,7 +289,7 @@ export async function generaDossier(
     messaggio: `Ricostruzione cronologica: analisi di ${analizzate.length} fonti in ${nLotti} lotti…`,
     progresso: 0,
   });
-  if (haAi) {
+  if (usaAi) {
     try {
       const esito = await analizzaFonti(
         piano.argomento,
@@ -288,14 +307,20 @@ export async function generaDossier(
       if (signal?.aborted) return null;
       avvisa(`Analisi con il modello non riuscita (${(err as Error).message.slice(0, 90)}): note estratte direttamente dai testi.`);
     }
-  } else {
+  } else if (!haAi) {
     avvisa("Modello linguistico non configurato: note estratte direttamente dai testi, stesura non disponibile.");
   }
   for (const f of analizzate) if (!f.nota) f.nota = notaAutomatica(perAnalisi.find((p) => p.n === f.n)!);
-  if (!haAi) emit({ tipo: "note", note: analizzate.map((f) => ({ n: f.n, nota: f.nota! })), fatte: analizzate.length, totali: analizzate.length });
+  if (!usaAi) emit({ tipo: "note", note: analizzate.map((f) => ({ n: f.n, nota: f.nota! })), fatte: analizzate.length, totali: analizzate.length });
+  // Quota esaurita durante l'analisi (anche da un'altra richiesta: e' per
+  // account): la stesura fallirebbe capitolo per capitolo, quindi si salta.
+  if (usaAi && quotaAiEsaurita()) {
+    usaAi = false;
+    avvisa(`${messaggioQuota()} La quota si è esaurita durante la generazione: le fonti non ancora analizzate hanno una nota estratta dal testo e i capitoli non sono stati scritti.`, true);
+  }
 
   /* ------------------------------ 5. Stesura ------------------------------ */
-  emit({ tipo: "fase", fase: "stesura", messaggio: "Stesura del dossier per capitoli…" });
+  emit({ tipo: "fase", fase: "stesura", messaggio: usaAi ? "Stesura del dossier per capitoli…" : "Riepilogo delle fonti senza stesura (modello non disponibile)…" });
   const valide = new Set(analizzate.map((f) => f.n));
   const sezioni: SezioneDossier[] = [];
   const citate = new Set<number>();
@@ -304,7 +329,7 @@ export async function generaDossier(
   let citRimosse = 0;
   let sezioniRiuscite = 0;
 
-  const pianoS: SezionePiano[] = haAi ? pianoSezioni(piano.argomento, analizzate) : [];
+  const pianoS: SezionePiano[] = usaAi ? pianoSezioni(piano.argomento, analizzate) : [];
   const stato = pianoS.map(() => ({ pezzi: [] as string[], finito: false, testo: "", parziale: "", ok: false }));
   let attivo = -1;
   const iniziate = new Set<string>();
@@ -364,7 +389,11 @@ export async function generaDossier(
       stato[i].ok = r.testo.length > 0;
     } catch (err) {
       if (signal?.aborted) return;
-      const motivo = scadenzaStesura.aborted ? "tempo massimo raggiunto" : (err as Error).message.slice(0, 120);
+      const motivo = scadenzaStesura.aborted
+        ? "tempo massimo raggiunto"
+        : quotaEsaurita(err)
+          ? "quota giornaliera di Workers AI esaurita"
+          : (err as Error).message.slice(0, 120);
       stato[i].testo = `${stato[i].parziale.trim() ? `${stato[i].parziale.trim()}\n\n` : ""}_Stesura di questa parte non completata (${motivo}). Le fonti restano consultabili nella timeline e nell'indice: usa "Rigenera" per riprovare._`;
       avvisi.push(`Una parte del dossier ("${s.titolo}${s.sottotitolo ? ` ${s.sottotitolo}` : ""}") non è stata scritta.`);
     }
@@ -428,7 +457,7 @@ export async function generaDossier(
   };
 
   // In cache solo dossier riusciti: un dossier degradato si rigenera alla prossima richiesta.
-  const riuscito = haAi && pianoS.length > 0 && sezioniRiuscite === pianoS.length;
+  const riuscito = usaAi && pianoS.length > 0 && sezioniRiuscite === pianoS.length;
   if (riuscito) await salvaCache(db, dossier);
   emit({ tipo: "fine", dossier, cache: false });
   return dossier;

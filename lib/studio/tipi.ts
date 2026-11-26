@@ -137,7 +137,8 @@ export type EventoStudio =
   | { tipo: "delta"; id: string; testo: string }
   | { tipo: "sezione_fine"; id: string; markdown: string }
   | { tipo: "fine"; dossier: Dossier; cache: boolean; nuoveFonti?: number }
-  | { tipo: "avviso"; messaggio: string }
+  /** `grave`: limita il dossier (es. quota AI esaurita), mostrato in evidenza. */
+  | { tipo: "avviso"; messaggio: string; grave?: boolean }
   | { tipo: "errore"; messaggio: string }
   /** Keep-alive durante le chiamate lunghe al modello (ignorato dal client). */
   | { tipo: "ping" };
