@@ -271,12 +271,44 @@ const RE_TIPO: Record<string, RegExp> = {
  * ma la cartella "00 - Sito Ade" usa forme libere ("Circolare11_2023 - ..."):
  * si confrontano titolo e nome file di tutti gli atti di quell'anno.
  */
+const VUOTE = new Set(
+  "a ad al alla alle ai agli con da dal dalla dalle dei degli del della delle di e ed il i gli la le lo l un una in nel nella nei per su sul sulla tra fra o che art n".split(" ")
+);
+
+function parole(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 2 && !VUOTE.has(t) && !/^\d+$/.test(t))
+  );
+}
+
+/**
+ * Somiglianza tra l'oggetto di un atto nuovo e i titoli del corpus STORICO
+ * (non gli atti importati in automatico, che si distinguono gia' per URL):
+ * intercetta i documenti caricati a mano senza numero (es. "00 - Sito Ade").
+ * Soglia alta: atti fratelli come le "sezioni stralcio" di citta' diverse non
+ * devono risultare duplicati l'uno dell'altro.
+ */
+function simile(oggetto: string, titolo: string): boolean {
+  const a = parole(oggetto);
+  const b = parole(titolo.replace(/^[^-]*\d[^-]*-\s*/, ""));
+  if (a.size < 4 || b.size < 4) return false;
+  let comuni = 0;
+  for (const t of b) if (a.has(t)) comuni++;
+  return comuni >= 5 && comuni / Math.min(a.size, b.size) >= 0.8;
+}
+
 export async function cercaDuplicato(
   db: Client,
   tipo: string,
   numero: string | null,
   anno: number | null,
-  url: string
+  url: string,
+  oggetto = ""
 ): Promise<number | null> {
   // 1) Stesso URL gia' importato in passato (anche se la voce e' stata persa).
   const perUrl = await db.execute({
@@ -284,7 +316,18 @@ export async function cercaDuplicato(
     args: [url],
   });
   if (perUrl.rows.length) return Number(perUrl.rows[0].id);
-  if (!numero || !anno) return null;
+  if (!anno) return null;
+
+  // 2) Senza numero: somiglianza dell'oggetto con i titoli storici dello stesso anno.
+  if (!numero) {
+    if (!oggetto) return null;
+    const rs = await db.execute({
+      sql: `SELECT id, titolo FROM documenti WHERE anno = ? AND nuovo_nome_file NOT LIKE 'http%'`,
+      args: [anno],
+    });
+    for (const r of rs.rows) if (simile(oggetto, String(r.titolo ?? ""))) return Number(r.id);
+    return null;
+  }
 
   const modello = RE_TIPO[tipo];
   if (!modello) return null;

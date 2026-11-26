@@ -114,7 +114,8 @@ async function oggettoConciso(oggettoUfficiale: string, testo: string): Promise<
           role: "user",
           content:
             "Scrivi UN SOLO oggetto conciso in italiano corretto, massimo 8 parole, che descriva il contenuto SPECIFICO del documento. " +
-            "NON includere il tipo di atto, il numero, la data o l'ente emittente. Niente virgolette, niente punto finale. Rispondi solo con l'oggetto.\n\n" +
+            "NON includere il tipo di atto, il numero, la data o l'ente emittente. Mantieni gli elementi distintivi (luoghi, uffici, servizi, istituti): " +
+            "due atti diversi non devono avere lo stesso oggetto. Niente virgolette, niente punto finale. Rispondi solo con l'oggetto.\n\n" +
             `OGGETTO UFFICIALE: ${oggettoUfficiale.slice(0, 600)}\n\nTESTO:\n${testo.slice(0, 1800)}`,
         },
       ],
@@ -172,7 +173,7 @@ async function leggiFonte(f: FonteConfig): Promise<{ stato: StatoFonte; voci: Vo
 export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<RapportoEsecuzione> {
   const t0 = Date.now();
   const prova = !!opts.prova;
-  const limite = Math.max(0, opts.limiteImport ?? 8);
+  const limite = Math.max(0, opts.limiteImport ?? 15);
   const budget = opts.budgetMs ?? 220_000;
   const rapporto: RapportoEsecuzione = {
     id: null,
@@ -263,8 +264,9 @@ export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<Rapp
         const n = note.get(v.url);
         return !n || (n.stato === "errore" && n.tentativi < MAX_TENTATIVI);
       })
-      // Dal piu' vecchio al piu' recente: l'ordine del corpus resta cronologico.
-      .sort((a, b) => (a.data ?? "").localeCompare(b.data ?? ""));
+      // Dal piu' recente: se il tempo o il limite si esauriscono, slittano alla
+      // settimana dopo gli atti meno attuali, non le novita'.
+      .sort((a, b) => (b.data ?? "").localeCompare(a.data ?? ""));
     rapporto.nuoveVoci = nuove.length;
     for (const s of rapporto.fonti) s.nuove = nuove.filter((v) => v.fonte === s.id).length;
 
@@ -345,7 +347,7 @@ export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<Rapp
       const chiave = chiaveAtto(v.tipo, numero, anno, v.data);
 
       // Deduplica contro il corpus esistente.
-      const duplicato = await cercaDuplicato(db, v.tipo, numero, anno, v.url);
+      const duplicato = await cercaDuplicato(db, v.tipo, numero, anno, v.url, v.oggetto);
       if (duplicato) {
         rapporto.duplicati++;
         const motivo = `già presente nel corpus (documento #${duplicato})`;
@@ -360,7 +362,13 @@ export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<Rapp
       }
 
       const oggetto = await oggettoConciso(v.oggetto, estratto.testo);
-      const titolo = numero ? `${fonte.abbrev} ${numero} - ${oggetto}` : `${fonte.abbrev} - ${oggetto}`;
+      // Senza numero/protocollo l'atto si distingue per data ("Prov. del 03/11/2026").
+      const dataBreve = v.data ? v.data.split("-").reverse().join("/") : null;
+      const titolo = numero
+        ? `${fonte.abbrev} ${numero} - ${oggetto}`
+        : dataBreve
+          ? `${fonte.abbrev} del ${dataBreve} - ${oggetto}`
+          : `${fonte.abbrev} - ${oggetto}`;
 
       if (prova) {
         rapporto.voci.push({ ...base, esito: "da_importare", motivo: valutazione.motivo, titolo });
