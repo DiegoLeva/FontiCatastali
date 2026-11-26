@@ -104,6 +104,8 @@ export interface StatisticheDossier {
   durataMs: number;
   chiamateAi: number;
   modello: string;
+  /** Neuroni Workers AI consumati dal dossier (stima prudenziale, +15%). */
+  neuroni?: number;
 }
 
 export interface Dossier {
@@ -123,6 +125,10 @@ export interface Dossier {
   verifiche: VerificheDossier;
   statistiche: StatisticheDossier;
   avvisi: string[];
+  /** Calcolato in lettura: generato prima di un fix che ne altera il contenuto. */
+  obsoleto?: string;
+  /** Segnalato dal cron: nuovi atti pertinenti entrati dopo la generazione. */
+  nuovaNormativa?: { atti: number; segnalatoIl: string };
 }
 
 export type FaseStudio = "cache" | "espansione" | "ricerca" | "estratti" | "analisi" | "stesura" | "verifica";
@@ -149,4 +155,8 @@ export interface DossierRecente {
   creatoIl: string;
   fonti: number;
   analizzate: number;
+  /** Da rigenerare (generato prima di un fix). */
+  obsoleto?: boolean;
+  /** Nuovi atti pertinenti segnalati dal cron dopo la generazione. */
+  nuovaNormativa?: number;
 }

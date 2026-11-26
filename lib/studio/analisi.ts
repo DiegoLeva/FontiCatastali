@@ -1,19 +1,24 @@
-import { chatJson, type ChatMessage } from "@/lib/cloudflare";
+import { chatJson, LLM_MODEL, quotaEsaurita, type ChatMessage } from "@/lib/cloudflare";
+import { neuroni, stimaToken } from "@/lib/ai/budget";
 import type { Estratti } from "./recupero";
 import { inParallelo } from "./recupero";
 import type { NotaFonte, RuoloFonte, StatoFonte } from "./tipi";
 
 /**
  * Fase "map" della pipeline: estrazione strutturata, fonte per fonte, di cio'
- * che ciascun documento dice SULL'ARGOMENTO. I lotti sono piccoli (il
- * contesto del modello e' limitato) e in parallelo; ogni nota viene validata
- * contro gli estratti: numeri ed estremi che non compaiono nel testo fornito
- * vengono scartati (anti-allucinazione). Nessuna fonte va persa: se il
- * modello la salta o fallisce, si ritenta da sola e, in ultima istanza, si
- * usa una nota deterministica ricavata dall'estratto.
+ * che ciascun documento dice SULL'ARGOMENTO. I lotti sono in parallelo; ogni
+ * nota viene validata contro gli estratti: numeri ed estremi che non
+ * compaiono nel testo fornito vengono scartati (anti-allucinazione). Nessuna
+ * fonte va persa: se il modello la salta si ritenta UNA volta (tutte le
+ * saltate del lotto insieme) e, in ultima istanza, si usa una nota
+ * deterministica ricavata dall'estratto.
+ *
+ * Costo: al modello arrivano solo l'inizio del documento e i due passaggi
+ * piu' pertinenti, ritagliati attorno alle corrispondenze (~1.100 caratteri
+ * per fonte), con istruzioni compatte.
  */
 
-export const MODELLO_ANALISI = process.env.CF_STUDIO_MAP_MODEL || process.env.CF_LLM_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export const MODELLO_ANALISI = process.env.CF_STUDIO_MAP_MODEL || LLM_MODEL;
 
 const RUOLI: RuoloFonte[] = ["istitutivo", "modifica", "chiarimento", "operativo", "abrogazione", "giurisprudenza", "contesto"];
 const STATI: StatoFonte[] = ["vigente", "superato", "incerto"];
@@ -41,7 +46,7 @@ const SCHEMA = {
   required: ["documenti"],
 };
 
-const SYSTEM = `Sei un giurista esperto di normativa e prassi catastale italiana. Analizzi estratti di documenti per costruire un dossier di studio su un argomento. Usi ESCLUSIVAMENTE il testo fornito: non aggiungi conoscenze esterne, non inventi numeri, date, articoli o norme. Rispondi solo in JSON.`;
+const SYSTEM = `Giurista esperto di prassi catastale italiana. Analizzi estratti di documenti usando SOLO il testo fornito: niente conoscenze esterne, niente numeri, date o norme inventati. Rispondi solo con JSON valido.`;
 
 export interface FontePerAnalisi {
   n: number;
@@ -52,13 +57,37 @@ export interface FontePerAnalisi {
   estratti: Estratti;
 }
 
+const INCIPIT_MAX = 220;
+const PASSAGGIO_MAX = 420;
+const PASSAGGI_MAX = 2;
+
+/** Ritaglia un passaggio attorno alla corrispondenza (che cade verso il 40%). */
+function ritaglia(p: string, max: number): string {
+  if (p.length <= max) return p;
+  const centro = Math.floor(p.length * 0.42);
+  let da = Math.max(0, Math.min(p.length - max, centro - Math.floor(max * 0.45)));
+  let a = da + max;
+  const s1 = p.indexOf(" ", da);
+  if (da > 0 && s1 >= 0 && s1 - da < 30) da = s1 + 1;
+  const s2 = p.lastIndexOf(" ", a);
+  if (a < p.length && s2 > da) a = s2;
+  return `${da > 0 ? "… " : ""}${p.slice(da, a).replace(/^…\s*/, "").replace(/\s*…$/, "")}${a < p.length ? " …" : ""}`;
+}
+
+/** Cio' che il modello vede (e su cui si validano le note). */
+export function estrattiCompatti(e: Estratti): Estratti {
+  return {
+    incipit: e.incipit.slice(0, INCIPIT_MAX),
+    passaggi: e.passaggi.slice(0, PASSAGGI_MAX).map((p) => ritaglia(p, PASSAGGIO_MAX)),
+    occorrenze: e.occorrenze,
+  };
+}
+
 function blocco(f: FontePerAnalisi): string {
-  const passaggi = f.estratti.passaggi.length
-    ? f.estratti.passaggi.map((p, i) => `${i + 1}. «${p}»`).join("\n")
-    : "(nessun passaggio con i termini cercati: valuta l'inizio del documento)";
-  return `[F${f.n}] ${f.titolo} | ${f.tipo} | anno ${f.anno === "0000" ? "non indicato" : f.anno} | cartella ${f.cartella}
-Inizio del documento: «${f.estratti.incipit}»
-Estratti pertinenti:
+  const e = estrattiCompatti(f.estratti);
+  const passaggi = e.passaggi.length ? e.passaggi.map((p) => `- «${p}»`).join("\n") : "- (nessun passaggio con i termini: valuta l'inizio)";
+  return `[F${f.n}] ${f.titolo} | ${f.tipo} | ${f.anno === "0000" ? "s.d." : f.anno}
+Inizio: «${e.incipit}»
 ${passaggi}`;
 }
 
@@ -67,21 +96,14 @@ function istruzioni(argomento: string, blocchi: string): ChatMessage[] {
     { role: "system", content: SYSTEM },
     {
       role: "user",
-      content: `ARGOMENTO DI STUDIO: «${argomento}»
+      content: `Argomento: «${argomento}». Per OGNI documento restituisci:
+f = numero (12 per [F12]); estremi = tipo, numero e data dell'atto se nel titolo/testo, altrimenti "";
+ruolo = istitutivo|modifica|chiarimento|operativo|abrogazione|giurisprudenza|contesto (contesto = cita l'argomento di passaggio);
+stato = vigente|superato (solo se il testo lo dice)|incerto;
+sintesi = max 35 parole su cosa dice SULL'ARGOMENTO; novita = cosa cambia rispetto a prima, max 25 parole, "" se nulla;
+rinvii = max 3 norme citate negli estratti (es. "L. 1249/1939, art. 3"), [] se nessuna.
+Solo dati presenti negli estratti. Formato: {"documenti":[{"f":1,"estremi":"","ruolo":"","stato":"","sintesi":"","novita":"","rinvii":[]}]}
 
-Per CIASCUN documento elencato restituisci un oggetto con:
-- "f": il numero del documento (es. 12 per [F12])
-- "estremi": tipo, numero e data dell'atto come risultano dal titolo o dal testo; "" se non ricavabili
-- "ruolo": "istitutivo" (introduce l'istituto o la disciplina), "modifica" (modifica o integra norme precedenti), "chiarimento" (interpreta o chiarisce), "operativo" (istruzioni, procedure, software, modelli), "abrogazione" (abroga o supera disposizioni), "giurisprudenza" (sentenze), "contesto" (cita l'argomento solo di passaggio)
-- "stato": "vigente", "superato" (solo se il testo lo indica o la disciplina e' dichiarata sostituita) oppure "incerto"
-- "sintesi": 1-2 frasi su cosa dice il documento SULL'ARGOMENTO (non in generale)
-- "novita": cosa introduce o cambia rispetto alla disciplina precedente, in 1 frase; "" se nulla
-- "rinvii": fino a 5 norme citate negli estratti e rilevanti per l'argomento (es. "L. 1249/1939, art. 3"); [] se nessuna
-
-Regole: usa solo gli estratti; se un dato manca lascia la stringa vuota; non inventare.
-Formato: {"documenti": [ { "f": ..., ... } ]}
-
-DOCUMENTI:
 ${blocchi}`,
     },
   ];
@@ -107,7 +129,8 @@ function supportato(testo: string, evidenza: string): boolean {
 }
 
 function notaValida(grezza: Record<string, unknown>, f: FontePerAnalisi): NotaFonte {
-  const evidenza = `${f.titolo} ${f.estratti.incipit} ${f.estratti.passaggi.join(" ")}`;
+  const visti = estrattiCompatti(f.estratti);
+  const evidenza = `${f.titolo} ${visti.incipit} ${visti.passaggi.join(" ")}`;
   const ruolo = RUOLI.includes(grezza.ruolo as RuoloFonte) ? (grezza.ruolo as RuoloFonte) : "contesto";
   const stato = STATI.includes(grezza.stato as StatoFonte) ? (grezza.stato as StatoFonte) : "incerto";
   let estremi = breve(grezza.estremi, 140);
@@ -115,13 +138,13 @@ function notaValida(grezza: Record<string, unknown>, f: FontePerAnalisi): NotaFo
   const rinvii = (Array.isArray(grezza.rinvii) ? grezza.rinvii : [])
     .map((r) => breve(r, 90))
     .filter((r) => r.length > 2 && supportato(r, evidenza))
-    .slice(0, 5);
+    .slice(0, 3);
   return {
     estremi,
     ruolo,
     stato,
-    sintesi: breve(grezza.sintesi, 420),
-    novita: breve(grezza.novita, 300),
+    sintesi: breve(grezza.sintesi, 320),
+    novita: breve(grezza.novita, 220),
     rinvii,
   };
 }
@@ -146,8 +169,9 @@ export function notaAutomatica(f: FontePerAnalisi): NotaFonte {
 /* Lotti                                                                       */
 /* -------------------------------------------------------------------------- */
 
-const MAX_CHAR_LOTTO = 11_000;
-const MAX_DOC_LOTTO = 6;
+const MAX_CHAR_LOTTO = 9_500;
+const MAX_DOC_LOTTO = 8;
+const ISTRUZIONI_CARATTERI = 1_150;
 
 export function lotti(fonti: FontePerAnalisi[]): FontePerAnalisi[][] {
   const out: FontePerAnalisi[][] = [];
@@ -167,10 +191,34 @@ export function lotti(fonti: FontePerAnalisi[]): FontePerAnalisi[][] {
   return out;
 }
 
+/** Token di output sufficienti per le note di un lotto (~110 per fonte). */
+const maxTokenLotto = (n: number) => Math.min(1_800, 140 * n + 120);
+
+/** Caratteri massimi di un blocco dopo la compattazione degli estratti. */
+const BLOCCO_MAX = 220 + PASSAGGI_MAX * (PASSAGGIO_MAX + 8) + 240;
+
+/** Stima del caso peggiore (senza margine) per `n` fonti, prima di leggere i testi. */
+export function stimaMassimaAnalisi(n: number): number {
+  let totale = 0;
+  for (let resto = n; resto > 0; resto -= MAX_DOC_LOTTO) {
+    const k = Math.min(MAX_DOC_LOTTO, resto);
+    totale += neuroni(MODELLO_ANALISI, stimaToken(ISTRUZIONI_CARATTERI + k * BLOCCO_MAX), maxTokenLotto(k));
+  }
+  return totale;
+}
+
+/** Stima prudente (senza margine) dei neuroni della fase di analisi. */
+export function stimaNeuroniAnalisi(fonti: FontePerAnalisi[]): number {
+  return lotti(fonti).reduce((s, l) => {
+    const caratteri = ISTRUZIONI_CARATTERI + l.reduce((c, f) => c + blocco(f).length + 2, 0);
+    return s + neuroni(MODELLO_ANALISI, stimaToken(caratteri), maxTokenLotto(l.length));
+  }, 0);
+}
+
 async function analizzaLotto(argomento: string, lotto: FontePerAnalisi[], signal?: AbortSignal): Promise<Map<number, NotaFonte>> {
   const risposta = (await chatJson(istruzioni(argomento, lotto.map(blocco).join("\n\n")), SCHEMA, {
     model: MODELLO_ANALISI,
-    maxTokens: 1800,
+    maxTokens: maxTokenLotto(lotto.length),
     temperature: 0.1,
     timeoutMs: 90_000,
     signal,
@@ -190,6 +238,8 @@ export interface EsitoAnalisi {
   note: Map<number, NotaFonte>;
   chiamate: number;
   automatiche: number;
+  /** Budget AI esaurito durante l'analisi (giornaliero o del dossier). */
+  budgetEsaurito: boolean;
 }
 
 /**
@@ -206,31 +256,30 @@ export async function analizzaFonti(
   let chiamate = 0;
   let automatiche = 0;
   let fatte = 0;
+  let budgetEsaurito = false;
   const gruppi = lotti(fonti);
 
   await inParallelo(gruppi, 8, async (lotto) => {
     let parziali = new Map<number, NotaFonte>();
-    try {
-      chiamate++;
-      parziali = await analizzaLotto(argomento, lotto, signal);
-    } catch {
-      /* lotto non riuscito o scadenza: ripiego sotto, fonte per fonte */
-    }
-    // Fonti saltate dal modello: un tentativo singolo, poi la nota automatica.
-    for (const f of lotto.filter((x) => !parziali.has(x.n))) {
-      if (signal?.aborted) {
-        parziali.set(f.n, notaAutomatica(f));
-        automatiche++;
-        continue;
-      }
+    if (!budgetEsaurito && !signal?.aborted) {
       try {
         chiamate++;
-        const singola = await analizzaLotto(argomento, [f], signal);
-        const nota = singola.get(f.n);
-        if (nota) parziali.set(f.n, nota);
-      } catch {
-        /* ripiego sotto */
+        parziali = await analizzaLotto(argomento, lotto, signal);
+      } catch (err) {
+        if (quotaEsaurita(err)) budgetEsaurito = true;
       }
+    }
+    // Fonti saltate dal modello: UN tentativo cumulativo, poi la nota automatica.
+    const saltate = lotto.filter((x) => !parziali.has(x.n));
+    if (saltate.length && !budgetEsaurito && !signal?.aborted) {
+      try {
+        chiamate++;
+        for (const [n, nota] of await analizzaLotto(argomento, saltate, signal)) parziali.set(n, nota);
+      } catch (err) {
+        if (quotaEsaurita(err)) budgetEsaurito = true;
+      }
+    }
+    for (const f of lotto) {
       if (!parziali.has(f.n)) {
         parziali.set(f.n, notaAutomatica(f));
         automatiche++;
@@ -240,5 +289,5 @@ export async function analizzaFonti(
     fatte += lotto.length;
     alLotto([...parziali.entries()].map(([n, nota]) => ({ n, nota })), fatte);
   });
-  return { note, chiamate, automatiche };
+  return { note, chiamate, automatiche, budgetEsaurito };
 }

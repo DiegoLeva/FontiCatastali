@@ -18,6 +18,10 @@ process.env.TURSO_DATABASE_URL = `file:${dbFile}`;
 process.env.CF_ACCOUNT_ID = "acc-prova";
 process.env.CF_API_TOKEN = "token-prova";
 process.env.CF_VECTORIZE_INDEX = "indice-prova";
+// Contatore dei neuroni senza il seed prudenziale del primo giorno e senza
+// lettura del consumo reale da Cloudflare (nessuna rete nei test).
+process.env.AI_SEED_INSTALLAZIONE = "0";
+process.env.AI_SYNC_REMOTA = "0";
 
 let fallimenti = 0;
 const verifica = (c: unknown, m: string) => {
@@ -39,7 +43,7 @@ const CORPUS: Array<[number, string, string, number, string, string]> = [
 ];
 
 /* --------------------------- Cloudflare simulato ------------------------- */
-function sse(pezzi: string[]): Response {
+function sse(pezzi: string[], usage?: { prompt_tokens: number; completion_tokens: number }): Response {
   const enc = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     start(c) {
@@ -49,6 +53,7 @@ function sse(pezzi: string[]): Response {
         const response = /^\s*\d+\s*$/.test(p) ? Number(p) : p;
         c.enqueue(enc.encode(`data: ${JSON.stringify({ response, choices: [{ index: 0, delta: { content: p } }] })}\n\n`));
       }
+      if (usage) c.enqueue(enc.encode(`data: ${JSON.stringify({ response: "", usage })}\n\n`));
       c.enqueue(enc.encode("data: [DONE]\n\n"));
       c.close();
     },
@@ -56,6 +61,9 @@ function sse(pezzi: string[]): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 const ok = (result: unknown) => new Response(JSON.stringify({ success: true, result }), { status: 200, headers: { "content-type": "application/json" } });
+/** Uso dei token come lo riporta Workers AI (circa 4 caratteri per token). */
+const uso = (prompt: string, risposta: string) => ({ prompt_tokens: Math.ceil(prompt.length / 4), completion_tokens: Math.ceil(risposta.length / 4) });
+let modelliUsati = new Set<string>();
 
 let chiamateAi = 0;
 // Quota giornaliera gratuita esaurita: risposta reale di Workers AI (429/4006).
@@ -76,7 +84,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(RISPOSTA_QUOTA, { status: 429, headers: { "content-type": "application/json" } });
   }
   const body = init?.body ? JSON.parse(String(init.body)) : {};
+  if (url.endsWith("/info")) return ok({ dimensions: 8, vectorCount: 100 });
   if (url.includes("/vectorize/")) return ok({ matches: [{ id: "4-0", score: 0.71 }, { id: "7-1", score: 0.66 }, { id: "9-0", score: 0.4 }] });
+  const modello = url.split("/ai/run/")[1] ?? "";
+  if (modello && !modello.includes("bge")) modelliUsati.add(modello);
   if (url.includes("bge-m3")) return ok({ data: (body.text as string[]).map(() => Array.from({ length: 8 }, () => 0.1)) });
   chiamateAi++;
   const prompt: string = (body.messages ?? []).map((m: { content: string }) => m.content).join("\n");
@@ -84,11 +95,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const nums = [...new Set([...prompt.matchAll(/\[F(\d+)\]/g)].map((m) => Number(m[1])))];
     const testo = `La voltura aggiorna l'intestazione catastale [F${nums[0]}], come previsto dal regolamento del 9 luglio 1905. ${nums.slice(1).map((n) => `Successivamente la fonte [F${n}] precisa la disciplina.`).join(" ")} Secondo la legge n. 4321/1999 [F999] tutto cambia.`;
     // Frammenti come quelli reali: le cifre arrivano da sole (" 9", " 1905").
-    return sse(testo.split(/(?=\s\d)|(?<=\d)(?=\s)/).flatMap((p) => p.match(/.{1,40}/gs) ?? [p]));
+    return sse(testo.split(/(?=\s\d)|(?<=\d)(?=\s)/).flatMap((p) => p.match(/.{1,40}/gs) ?? [p]), uso(prompt, testo));
   }
-  if (/termini/.test(prompt) && /terminologia/.test(prompt)) return ok({ response: { termini: ["voltura catastale", "modello 98T", "termine inesistente xyz"] } });
+  if (/termini/.test(prompt) && /terminologia/.test(prompt)) return ok({ response: { termini: ["voltura catastale", "modello 98T", "termine inesistente xyz"] }, usage: uso(prompt, "x".repeat(120)) });
   const nums = [...prompt.matchAll(/^\[F(\d+)\]/gm)].map((m) => Number(m[1]));
   return ok({
+    usage: uso(prompt, "x".repeat(nums.length * 400)),
     response: {
       documenti: nums.map((n, i) => ({
         f: n,
@@ -163,6 +175,9 @@ async function main() {
   verifica(d.lacune.some((l) => /1249/.test(l.riferimento)), "L. 1249/1939 segnalata come norma richiamata ma assente dal DB");
   verifica(d.timeline.length === analizzate.length, "timeline: una voce per fonte analizzata");
   verifica(analizzate.every((f) => f.passaggi.length > 0), "estratti pertinenti per ogni fonte analizzata");
+  verifica([...modelliUsati].every((m) => m === "@cf/google/gemma-4-26b-a4b-it"), `modello leggero per analisi e stesura (${[...modelliUsati].join(", ")})`);
+  verifica(typeof d.statistiche.neuroni === "number" && d.statistiche.neuroni > 0 && d.statistiche.neuroni <= 2500, `neuroni del dossier registrati e sotto il tetto (${d.statistiche.neuroni})`);
+  modelliUsati = new Set();
 
   console.log("\n# Cache");
   const chiamatePrima = chiamateAi;
@@ -196,7 +211,7 @@ async function main() {
   quotaFinita = true;
   const evQ1 = await leggi(await POST(richiestaQ({ argomento: "volture", rigenera: true })));
   const fQ1 = evQ1.find((e) => e.tipo === "fine") as Fine | undefined;
-  verifica(evQ1.some((e) => e.tipo === "avviso" && e.grave === true && /quota/i.test(String(e.messaggio))), "avviso grave sulla quota esaurita");
+  verifica(evQ1.some((e) => e.tipo === "avviso" && e.grave === true && /quota|budget/i.test(String(e.messaggio))), "avviso grave sulla quota esaurita");
   verifica(fQ1?.cache === true && !!fQ1.dossier?.sezioni.some((s) => s.id === "inquadramento"), "\"Rigenera\" con quota esaurita: resta la versione completa salvata");
   const evQ2 = await leggi(await POST(richiestaQ({ argomento: "intestazioni catastali" })));
   const fQ2 = evQ2.find((e) => e.tipo === "fine") as Fine | undefined;

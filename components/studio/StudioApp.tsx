@@ -424,6 +424,20 @@ export function StudioApp() {
                       <span className="text-[12px] text-mute">
                         {r.fonti} fonti · {r.analizzate} analizzate · {dataLeggibile(r.creatoIl)}
                       </span>
+                      {(r.nuovaNormativa || r.obsoleto) && (
+                        <span className="mt-1 flex flex-wrap gap-1">
+                          {r.nuovaNormativa ? (
+                            <span className="rounded-full border border-[#0a7a3440] bg-[#0a7a3414] px-1.5 py-px text-[10.5px] font-medium text-[#0a6b2e] dark:text-[#5fd38d]">
+                              Nuova normativa: {r.nuovaNormativa} {r.nuovaNormativa === 1 ? "atto" : "atti"}
+                            </span>
+                          ) : null}
+                          {r.obsoleto && (
+                            <span className="rounded-full border border-[#b4530940] bg-[#f9cb2826] px-1.5 py-px text-[10.5px] font-medium text-[#9a4a07] dark:text-[#f5b86a]">
+                              Da rigenerare
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </span>
                     <ChevronIcon className="h-4 w-4 shrink-0 text-mute group-hover:text-link" />
                   </button>
@@ -484,6 +498,21 @@ export function StudioApp() {
           <div role="status" className="rounded-ds border border-[#b4530940] bg-[#f9cb281f] px-4 py-3 text-[13.5px] leading-relaxed text-[#7a3a05] dark:text-[#f5b86a] print:hidden">
             <span className="font-semibold">Servizio AI in pausa. </span>
             {limitazione}
+          </div>
+        )}
+        {dossier?.obsoleto && (
+          <div className="rounded-ds border border-[#b4530940] bg-[#f9cb281f] px-4 py-2.5 text-[13px] text-[#7a3a05] dark:text-[#f5b86a] print:hidden">
+            Versione da aggiornare: {dossier.obsoleto}. Verrà rigenerata automaticamente appena c&apos;è budget AI disponibile.
+          </div>
+        )}
+        {dossier?.nuovaNormativa && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-ds border border-[#0a7a3433] bg-[#0a7a340d] px-4 py-2.5 text-[13px] text-[#0a6b2e] dark:text-[#5fd38d] print:hidden">
+            <span>
+              Nuova normativa disponibile: {dossier.nuovaNormativa.atti} {dossier.nuovaNormativa.atti === 1 ? "atto pertinente importato" : "atti pertinenti importati"} dal controllo automatico dopo la generazione. Rigenerazione consigliata.
+            </span>
+            <button onClick={() => void avvia(argomento, true)} disabled={inCorso} className="font-medium underline underline-offset-4 disabled:opacity-50">
+              Rigenera
+            </button>
           </div>
         )}
         {daCache && dossier && (
@@ -738,6 +767,7 @@ function Riepilogo({
         {dossier && (
           <p className="font-mono text-[11.5px] text-mute">
             {Math.round(dossier.statistiche.durataMs / 1000)} s · {dossier.statistiche.chiamateAi} chiamate AI
+            {typeof dossier.statistiche.neuroni === "number" ? ` · ~${dossier.statistiche.neuroni.toLocaleString("it-IT")} neuroni` : ""}
           </p>
         )}
       </div>

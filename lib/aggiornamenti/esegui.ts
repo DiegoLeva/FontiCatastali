@@ -1,4 +1,5 @@
 import type { Client } from "@libsql/client";
+import { conServizioAi } from "@/lib/ai/budget";
 import { getDb } from "@/lib/db";
 import { chat } from "@/lib/cloudflare";
 import { FONTI, parseElenco, scaricaElenco, type FonteConfig, type VoceFonte } from "./fonti";
@@ -170,7 +171,12 @@ async function leggiFonte(f: FonteConfig): Promise<{ stato: StatoFonte; voci: Vo
   };
 }
 
-export async function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<RapportoEsecuzione> {
+/** Le chiamate AI del cron (titoli, embedding) attingono alla riserva protetta. */
+export function eseguiAggiornamento(opts: OpzioniEsecuzione): Promise<RapportoEsecuzione> {
+  return conServizioAi("cron", () => eseguiAggiornamentoCron(opts));
+}
+
+async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<RapportoEsecuzione> {
   const t0 = Date.now();
   const prova = !!opts.prova;
   const limite = Math.max(0, opts.limiteImport ?? 15);

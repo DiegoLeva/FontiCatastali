@@ -1,5 +1,6 @@
 import type { Client } from "@libsql/client";
 import { embed, vectorSearchIds } from "@/lib/cloudflare";
+import { prenotaQueryVectorize } from "@/lib/ai/vectorize";
 import { docUrl, fmtAnno } from "@/lib/docs";
 import { normalizza, type Concetto } from "./espansione";
 
@@ -183,6 +184,9 @@ export async function contaDocumenti(db: Client, fts: string): Promise<number> {
 export async function cercaSemantica(testo: string): Promise<Map<number, number>> {
   const out = new Map<number, number>();
   if (!process.env.CF_ACCOUNT_ID || !process.env.CF_API_TOKEN || !process.env.CF_VECTORIZE_INDEX) return out;
+  // Guardiano delle quote Vectorize: con l'indice oltre le dimensioni incluse
+  // nel piano anche una query costerebbe; si resta sulla ricerca testuale.
+  if (!(await prenotaQueryVectorize())) throw new Error("sospesa per restare nelle quote gratuite di Vectorize");
   const vettore = await embed(testo);
   const matches = await vectorSearchIds(vettore, 100);
   for (const m of matches) {
@@ -276,12 +280,32 @@ export function selezionaAnalizzate(ordinati: Candidato[]): Set<number> {
   datati.slice(0, 4).forEach((c) => metti(c, 30)); // origini
   datati.slice(-6).forEach((c) => metti(c, 30)); // disciplina recente
 
-  return new Set(
-    [...priorita.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, MAX_ANALIZZATE)
-      .map(([id]) => id)
-  );
+  // Atti quasi identici (stesso anno, titolo simile all'80%: ristampe,
+  // allegati, versioni) si analizzano una volta sola; gli altri restano
+  // nell'indice come menzioni. Meno lotti, meno neuroni, stesso contenuto.
+  const perId = new Map(ordinati.map((c) => [c.id, c]));
+  const scelti: Candidato[] = [];
+  for (const [id] of [...priorita.entries()].sort((a, b) => b[1] - a[1])) {
+    if (scelti.length >= MAX_ANALIZZATE) break;
+    const c = perId.get(id);
+    if (!c) continue;
+    if (scelti.some((s) => quasiUguali(s, c))) continue;
+    scelti.push(c);
+  }
+  return new Set(scelti.map((c) => c.id));
+}
+
+const paroleTitolo = (t: string) => new Set(normalizza(t).split(/[^a-z0-9]+/).filter((p) => p.length > 2 && !/^(del|della|delle|dei|per|con|nel|nella)$/.test(p)));
+
+/** Stesso anno e titoli con almeno l'80% di parole in comune (Jaccard). */
+export function quasiUguali(a: { anno: string; titolo: string }, b: { anno: string; titolo: string }): boolean {
+  if (a.anno !== b.anno) return false;
+  const x = paroleTitolo(a.titolo);
+  const y = paroleTitolo(b.titolo);
+  if (x.size < 3 || y.size < 3) return false;
+  let comuni = 0;
+  for (const p of x) if (y.has(p)) comuni++;
+  return comuni / (x.size + y.size - comuni) >= 0.8;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -53,6 +53,11 @@ const STOP = new Set(
     "o od che cui come non piu sono essere ai sensi art articolo n nr ecc etc").split(" ")
 );
 
+/** Parole significative di una frase: niente articoli, preposizioni, parole di 1-2 lettere. */
+export function paroleSignificative(s: string, altreStop?: Set<string>): string[] {
+  return tokens(s).filter((t) => !STOP.has(t) && !altreStop?.has(t) && (t.length >= 3 || /\d/.test(t)));
+}
+
 /**
  * Radice leggera per la ricerca a prefisso: toglie la vocale finale (e le
  * desinenze -che/-chi/-ghe/-ghi, -zione/-zioni), mai sotto 4 caratteri.

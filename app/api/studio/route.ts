@@ -7,7 +7,10 @@ import { chiaveArgomento, espandiArgomento, tokens, unioneFts } from "@/lib/stud
 import { consumaQuota, dossierRecenti, leggiCache } from "@/lib/studio/cache";
 import { nuoveFontiDopo } from "@/lib/studio/recupero";
 import { generaDossier } from "@/lib/studio/pipeline";
-import type { EventoStudio } from "@/lib/studio/tipi";
+import { MAX_GENERAZIONI_GIORNO, MINIMO_NEURONI_DOSSIER, TETTO_DOSSIER } from "@/lib/studio/limiti";
+import { disponibili } from "@/lib/ai/budget";
+import { ripristinoQuota } from "@/lib/cloudflare";
+import type { Dossier, EventoStudio } from "@/lib/studio/tipi";
 
 /**
  * Studio Normativo (BETA).
@@ -17,8 +20,10 @@ import type { EventoStudio } from "@/lib/studio/tipi";
  *   GET  /api/studio?argomento=…              -> dossier dalla cache (404 se assente)
  *   GET  /api/studio?argomento=…&genera=1     -> come il POST (link condivisibili e prove)
  *
- * Le generazioni costano decine di chiamate al modello: rate limit per IP e
- * tetto giornaliero globale. I dossier gia' in cache sono gratuiti e illimitati.
+ * Le generazioni consumano neuroni di Workers AI: si parte solo se il budget
+ * gratuito di oggi lo consente (lib/ai/budget.ts), con al massimo 4 nuovi
+ * dossier al giorno e un rate limit per IP. I dossier gia' in cache sono
+ * gratuiti e illimitati; quelli obsoleti si rigenerano appena c'e' budget.
  */
 
 export const runtime = "nodejs";
@@ -28,7 +33,8 @@ export const maxDuration = 300;
 
 const RL_MAX = Number(process.env.STUDIO_MAX_PER_IP || 4);
 const RL_WINDOW_MS = 10 * 60 * 1000;
-const MAX_GIORNO = Number(process.env.STUDIO_MAX_GIORNO || 80);
+const MAX_GIORNO = MAX_GENERAZIONI_GIORNO;
+const MINIMO_NEURONI = MINIMO_NEURONI_DOSSIER;
 
 function argomentoValido(raw: unknown): string | null {
   const a = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
@@ -98,40 +104,61 @@ function streamDi(lavoro: (emit: (e: EventoStudio) => void) => Promise<void>): R
   });
 }
 
+function servi(salvato: Dossier, nuove: number, avviso?: string): Response {
+  return streamDi(async (emit) => {
+    emit({ tipo: "fase", fase: "cache", messaggio: "Dossier già generato: caricato dall'archivio." });
+    if (avviso) emit({ tipo: "avviso", messaggio: avviso, grave: true });
+    emit({ tipo: "fine", dossier: salvato, cache: true, nuoveFonti: nuove });
+  });
+}
+
+function rifiuta(messaggio: string, salvato: Dossier | null, nuove: number, retryAfter?: number): Response {
+  // Con una versione salvata (anche obsoleta) la si mostra con l'avviso.
+  if (salvato) return servi(salvato, nuove, messaggio);
+  return NextResponse.json(
+    { error: messaggio },
+    { status: 429, headers: { ...(retryAfter ? { "Retry-After": String(retryAfter) } : {}), "Cache-Control": NO_STORE } }
+  );
+}
+
 async function rispondi(req: NextRequest, argomento: string, rigenera: boolean): Promise<Response> {
   const db = getDb();
   const chiave = chiaveArgomento(argomento);
+  const salvato = await leggiCache(db, chiave);
+  const nuove = salvato ? await nuoveFontiDopo(db, unioneFts(espandiArgomento(argomento).concetti), salvato.versioneCorpus.maxId) : 0;
 
-  // 1) Cache: istantanea, gratuita, senza limiti.
-  if (!rigenera) {
-    const salvato = await leggiCache(db, chiave);
-    if (salvato) {
-      const nuove = await nuoveFontiDopo(db, unioneFts(espandiArgomento(argomento).concetti), salvato.versioneCorpus.maxId);
-      return streamDi(async (emit) => {
-        emit({ tipo: "fase", fase: "cache", messaggio: "Dossier già generato: caricato dall'archivio." });
-        emit({ tipo: "fine", dossier: salvato, cache: true, nuoveFonti: nuove });
-      });
-    }
+  // 1) Cache valida: istantanea, gratuita, senza limiti.
+  if (salvato && !rigenera && !salvato.obsoleto) return servi(salvato, nuove);
+
+  // 2) Serve una generazione (nuova, "Rigenera" o versione obsoleta).
+  const { ora, secondi } = ripristinoQuota();
+  const residuo = await disponibili("studio").catch(() => 0);
+  if (residuo < MINIMO_NEURONI) {
+    return rifiuta(
+      salvato?.obsoleto
+        ? `Questa versione del dossier è da aggiornare (${salvato.obsoleto}): verrà rigenerata automaticamente alla prossima apertura dopo le ${ora} (ora italiana), quando si azzera il budget AI gratuito.`
+        : `Il budget AI gratuito di oggi per lo Studio è esaurito: nuove generazioni dalle ${ora} (ora italiana). I dossier già pronti restano consultabili.`,
+      salvato,
+      nuove,
+      secondi
+    );
   }
-
-  // 2) Generazione: limiti per IP e giornaliero.
   const rl = rateLimit(`studio:${clientIp(req)}`, RL_MAX, RL_WINDOW_MS);
   if (!rl.ok) {
-    return NextResponse.json(
-      { error: `Hai generato molti dossier in poco tempo: riprova tra ${Math.ceil(rl.retryAfter / 60)} minuti. I dossier già generati restano consultabili.` },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfter), "Cache-Control": NO_STORE } }
-    );
+    return rifiuta(`Hai generato molti dossier in poco tempo: riprova tra ${Math.ceil(rl.retryAfter / 60)} minuti. I dossier già generati restano consultabili.`, salvato, nuove, rl.retryAfter);
   }
   const quota = await consumaQuota(db, MAX_GIORNO);
   if (!quota.ok) {
-    return NextResponse.json(
-      { error: "È stato raggiunto il limite giornaliero di nuovi dossier (BETA). Riprova domani: i dossier già generati restano consultabili." },
-      { status: 429, headers: { "Cache-Control": NO_STORE } }
+    return rifiuta(
+      `Oggi sono già stati generati ${MAX_GIORNO} nuovi dossier: è il limite giornaliero per restare nella quota AI gratuita. Nuove generazioni dalle ${ora} (ora italiana); i dossier già pronti restano consultabili.`,
+      salvato,
+      nuove,
+      secondi
     );
   }
 
   return streamDi(async (emit) => {
-    await generaDossier(argomento, emit);
+    await generaDossier(argomento, emit, undefined, { tettoNeuroni: Math.min(TETTO_DOSSIER, residuo) });
   });
 }
 

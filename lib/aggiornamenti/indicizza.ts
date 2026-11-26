@@ -1,4 +1,5 @@
 import { CloudflareError, d1Query, embedMany, vectorUpsert } from "@/lib/cloudflare";
+import { spazioPerNuoviVettori } from "@/lib/ai/vectorize";
 
 /**
  * Indicizzazione semantica (Normie: Vectorize + D1) degli atti importati.
@@ -120,6 +121,10 @@ export async function indicizzaSemantico(d: DocDaIndicizzare): Promise<string> {
   }
   const pezzi = chunkTesto(d.testo);
   if (!pezzi.length) return "errore: testo vuoto";
+  // Quote Vectorize: nuovi vettori solo se le dimensioni memorizzate restano
+  // sotto quelle incluse nel piano (altrimenti si rimanda, senza costi).
+  const spazio = await spazioPerNuoviVettori(pezzi.length);
+  if (!spazio.ok) return `rimandata: ${spazio.motivo}`;
   try {
     // 1) testo su D1 per primo: e' la fonte autoritativa letta da Normie.
     for (let i = 0; i < pezzi.length; i += D1_BATCH) {

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteHeader } from "@/components/SiteHeader";
 import { leggiStato } from "@/lib/aggiornamenti/stato";
+import { leggiStatoRisorse, type StatoRisorse } from "@/lib/ai/stato";
+import { StatoRisorseSezione } from "@/components/StatoRisorse";
 import type { EsecuzioneRiepilogo, EsitoEsecuzione, StatoAggiornamenti } from "@/lib/aggiornamenti/tipi";
 import { docUrl } from "@/lib/docs";
 
@@ -132,8 +134,17 @@ async function carica(): Promise<{ stato: StatoAggiornamenti | null; errore: str
   }
 }
 
+async function caricaRisorse(): Promise<StatoRisorse | null> {
+  try {
+    return await leggiStatoRisorse();
+  } catch (err) {
+    console.error("[/aggiornamenti] risorse:", err);
+    return null;
+  }
+}
+
 export default async function AggiornamentiPage() {
-  const { stato, errore } = await carica();
+  const [{ stato, errore }, risorse] = await Promise.all([carica(), caricaRisorse()]);
 
   return (
     <main className="min-h-dvh px-4 pb-24 pt-5 sm:pt-8">
@@ -176,6 +187,8 @@ export default async function AggiornamentiPage() {
                 </p>
               )}
             </section>
+
+            {risorse && <StatoRisorseSezione r={risorse} />}
 
             <section className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-ds-lg border border-hairline bg-canvas p-5 shadow-ds">

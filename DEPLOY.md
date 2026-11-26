@@ -147,8 +147,10 @@ extra: l'API route gira già in runtime Node.
 |-----------|--------------|--------------|
 | `CRON_SECRET` | **sì** per il cron | autentica il cron del lunedì (`openssl rand -hex 32`) |
 | `AGGIORNAMENTI_WEBHOOK_URL` | no | notifica Slack/Discord/Teams di novità ed errori |
-| `CF_STUDIO_MAP_MODEL`, `CF_STUDIO_WRITE_MODEL` | no | modelli dello Studio (default `CF_LLM_MODEL`) |
-| `STUDIO_MAX_PER_IP`, `STUDIO_MAX_GIORNO` | no | limiti di generazione dei dossier (default 4/10 min, 80/giorno) |
+| `CF_STUDIO_MAP_MODEL`, `CF_STUDIO_WRITE_MODEL` | no | modelli dello Studio (default `CF_LLM_MODEL` = Gemma 4 26B A4B) |
+| `STUDIO_MAX_PER_IP`, `STUDIO_MAX_GIORNO`, `STUDIO_NEURONI_DOSSIER` | no | limiti dei dossier (default 4/10 min per IP, 4 nuovi al giorno, 2.500 neuroni l'uno) |
+| `AI_NEURONI_GIORNO`, `AI_NEURONI_RISERVA` | no | tetto giornaliero di neuroni (default 8.800, max 9.500) e riserva per Normie e cron (2.000) |
+| `AI_SYNC_REMOTA`, `VECTORIZE_OLTRE_QUOTA` | no | allineamento al consumo reale (default attivo) e guardiano Vectorize (default attivo) |
 
 - Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
   servono le tabelle `aggiornamenti_*` e `studio_dossier`, create al primo uso.
@@ -156,14 +158,21 @@ extra: l'API route gira già in runtime Node.
   Studio; per indicizzare in Normie anche gli atti importati dal cron servono
   **Vectorize Edit** e **D1 Edit** (senza, la ricerca, la mappa e lo Studio li
   vedono comunque; la pagina `/aggiornamenti` segnala l'arretrato).
-- **Quota Workers AI**: sul piano Cloudflare *Workers Free* l'account ha
-  10.000 neuroni al giorno (azzerati alle 00:00 UTC). Un dossier dello Studio
-  ne consuma circa 7-8.000, una risposta di Normie qualche centinaio: per un
-  uso reale serve il piano **Workers Paid**. A quota esaurita (errore 4006)
-  l'app non insiste: le chiamate ai modelli si sospendono per 10 minuti,
-  Normie risponde con un messaggio di pausa (503) e lo Studio mostra fonti,
-  estratti e timeline senza capitoli, senza salvarlo in cache e senza
-  sostituire un dossier completo già salvato.
+- **Spesa AI a 0 € extra** (`lib/ai/budget.ts`): Cloudflare include 10.000
+  neuroni al giorno per account (azzerati alle 00:00 UTC, 01:00 in Italia);
+  sul piano Workers Paid il resto si paga. Ogni chiamata prenota su Turso il
+  suo costo massimo PRIMA di partire e si salda sui token reali (+15%): oltre
+  il tetto di 8.800 neuroni la chiamata non parte. 2.000 neuroni restano
+  riservati a Normie e cron; lo Studio fa al massimo 4 nuovi dossier al giorno
+  (~850 neuroni in media, ~1.350 nel caso peggiore, tetto 2.500). Il giorno in
+  cui il contatore nasce la quota è considerata già consumata. Consumi su
+  `/aggiornamenti` e `/api/risorse`. Con il permesso **Account Analytics:
+  Read** sul token il contatore si allinea al consumo reale dell'account.
+- **Vectorize** (`lib/ai/vectorize.ts`): Workers Paid include 50 M dimensioni
+  interrogate e 10 M memorizzate al mese, e le interrogate contano anche i
+  vettori memorizzati. Con l'indice oltre quota l'app non interroga né
+  aggiunge vettori: Normie usa la ricerca testuale (FTS + estratti +
+  reranker).
 - `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
   (cron e Studio, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare

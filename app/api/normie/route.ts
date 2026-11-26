@@ -24,23 +24,29 @@ import {
 } from "@/lib/normie";
 import { clientIp, NO_STORE } from "@/lib/http";
 import { rateLimit } from "@/lib/ratelimit";
+import { getDb } from "@/lib/db";
+import { conServizioAi } from "@/lib/ai/budget";
+import { prenotaQueryVectorize } from "@/lib/ai/vectorize";
+import { recuperoTestuale } from "@/lib/normie-testuale";
 
 // Le chiamate REST a Cloudflare + LLM richiedono il runtime Node.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// La generazione LLM (Llama-3.3 70B) puo' essere lunga: 60s per evitare blocchi
-// sulle risposte piu' articolate. Richiede piano Vercel Pro (Hobby = max 10s).
+// La generazione LLM puo' essere lunga: 60s per evitare blocchi sulle
+// risposte piu' articolate (con Fluid Compute e' ammesso anche su Hobby).
 export const maxDuration = 60;
 
 const RETRIEVE_K = 25; // candidati recuperati da Vectorize (poi rerankati)
 const RERANK_K = 8; // chunk finali passati al modello dopo il rerank
 const MIN_SCORE = 0.3; // prefiltro cosine grezzo; la selezione fine la fa il reranker
-const MAX_ANSWER_TOKENS = 2000; // risposte piu' complete (analisi step-by-step)
+// Tetto di output: la prenotazione dei neuroni copre il caso peggiore, quindi
+// un tetto piu' basso lascia piu' risposte nella quota gratuita giornaliera.
+const MAX_ANSWER_TOKENS = 1500;
 const MAX_QUESTION_LEN = 2000;
 const MAX_HISTORY = 4; // ultimi turni inviati al modello per continuita'
 /** Ogni turno della cronologia viene troncato: il client non e' affidabile. */
 const MAX_HISTORY_CHARS = 3000;
-/** Rate limit per IP: ogni domanda costa embedding + rerank + LLM 70B. */
+/** Rate limit per IP: ogni domanda costa embedding + rerank + LLM. */
 const RL_MAX = 12;
 const RL_WINDOW_MS = 5 * 60 * 1000;
 
@@ -188,24 +194,28 @@ export async function POST(
     );
   }
 
+  return conServizioAi("normie", () => rispondi(question, body));
+}
+
+async function rispondi(question: string, body: NormieRequestBody): Promise<NextResponse<NormieResponse>> {
   try {
-    // 1) Espansione della query (C): scioglie sigle + sinonimi -> miglior recall.
-    //    Usata SOLO per l'embedding di ricerca, non per la risposta.
-    const searchQuery = expandQuery(question);
-    const queryVector = await embed(searchQuery);
-
-    // 2) Ricerca dei candidati (Cloudflare Vectorize), con eventuale filtro
-    //    categoria/anno sui metadati.
-    const filter = buildVectorFilter(body.filters);
-    const matches = (await vectorSearch(queryVector, RETRIEVE_K, filter)).filter(
-      (m) => m.score >= MIN_SCORE
-    );
-    if (matches.length === 0) {
-      return NextResponse.json({ answer: NO_CONTEXT_ANSWER, sources: [] });
+    // 1-3) Recupero. Semantico (Vectorize) solo se resta entro le quote
+    //      incluse nel piano; altrimenti testuale (FTS di Turso + estratti
+    //      dei testi integrali). Il formato dei chunk e' lo stesso.
+    let chunks: RetrievedChunk[] = [];
+    if (await prenotaQueryVectorize()) {
+      // Espansione della query: scioglie sigle + sinonimi (solo per l'embedding).
+      const queryVector = await embed(expandQuery(question));
+      const filter = buildVectorFilter(body.filters);
+      const matches = (await vectorSearch(queryVector, RETRIEVE_K, filter)).filter(
+        (m) => m.score >= MIN_SCORE
+      );
+      // Testo + metadati dei chunk da D1 (fonte autoritativa).
+      chunks = await resolveChunks(matches);
     }
-
-    // 3) Testo + metadati dei chunk da D1 (fonte autoritativa).
-    let chunks = await resolveChunks(matches);
+    if (chunks.length === 0) {
+      chunks = await recuperoTestuale(getDb(), question, body.filters);
+    }
     if (chunks.length === 0) {
       return NextResponse.json({ answer: NO_CONTEXT_ANSWER, sources: [] });
     }

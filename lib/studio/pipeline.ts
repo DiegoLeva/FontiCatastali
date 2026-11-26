@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db";
 import { chatJson, quotaAiEsaurita, quotaEsaurita, ripristinoQuota } from "@/lib/cloudflare";
+import { conServizioAi, disponibili, MARGINE, type TettoLocale } from "@/lib/ai/budget";
+import { TETTO_DOSSIER } from "./limiti";
 import { concettoDaTermine, espandiArgomento, unioneFts, type Concetto } from "./espansione";
 import {
   arricchisci,
@@ -15,7 +17,7 @@ import {
   versioneCorpus,
   type Estratti,
 } from "./recupero";
-import { analizzaFonti, lotti, MODELLO_ANALISI, notaAutomatica, type FontePerAnalisi } from "./analisi";
+import { analizzaFonti, lotti, MODELLO_ANALISI, notaAutomatica, stimaMassimaAnalisi, type FontePerAnalisi } from "./analisi";
 import {
   calcolaLacune,
   MODELLO_STESURA,
@@ -23,6 +25,7 @@ import {
   riferimentiNonVerificati,
   scriviSezione,
   sezioneAvvertenze,
+  stimaNeuroniStesura,
   validaCitazioni,
   type SezionePiano,
 } from "./stesura";
@@ -86,10 +89,29 @@ function annoMassimoCitato(testo: string): number {
   return max;
 }
 
+/** Quota del tetto riservata all'analisi: il resto e' per la stesura. */
+const QUOTA_ANALISI = 0.55;
+
+/**
+ * Genera un dossier attribuendo ogni chiamata AI allo Studio e al tetto del
+ * singolo dossier: oltre il tetto le chiamate non partono e la pipeline
+ * degrada (note automatiche, capitoli non scritti) invece di spendere.
+ */
 export async function generaDossier(
   argomento: string,
   emit: (e: EventoStudio) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opzioni: { tettoNeuroni?: number } = {}
+): Promise<Dossier | null> {
+  const tetto: TettoLocale = { nome: "questo dossier", limite: Math.min(TETTO_DOSSIER, opzioni.tettoNeuroni ?? TETTO_DOSSIER), usati: 0 };
+  return conServizioAi("studio", () => generaDossierEntroTetto(argomento, emit, signal, tetto), tetto);
+}
+
+async function generaDossierEntroTetto(
+  argomento: string,
+  emit: (e: EventoStudio) => void,
+  signal: AbortSignal | undefined,
+  tetto: TettoLocale
 ): Promise<Dossier | null> {
   const t0 = Date.now();
   const db = getDb();
@@ -112,7 +134,7 @@ export async function generaDossier(
   // il modello (fallirebbero tutte), ma fonti, estratti e timeline restano.
   let aiEsaurita = false;
   const messaggioQuota = () =>
-    `Quota giornaliera gratuita di Workers AI esaurita: fino alle ${ripristinoQuota().ora} (ora italiana), quando si azzera, il modello non può analizzare le fonti né scrivere i capitoli.`;
+    `Budget AI gratuito di oggi esaurito: fino alle ${ripristinoQuota().ora} (ora italiana), quando si azzera, il modello non può analizzare le fonti né scrivere i capitoli.`;
 
   /* ----------------------------- 1. Espansione ---------------------------- */
   const piano = espandiArgomento(argomento);
@@ -152,9 +174,9 @@ export async function generaDossier(
   // non e' generico (al massimo il 6% dei documenti): sul corpus reale il
   // modello proponeva per "volture" anche "Agenzia delle Entrate" (418 doc).
   const conteggiAi = await inParallelo(proposte, 6, (c) => contaDocumenti(db, c.fts));
-  const tetto = Math.max(25, Math.round(versione.documenti * 0.06));
+  const tettoGenerici = Math.max(25, Math.round(versione.documenti * 0.06));
   const validati = proposte
-    .filter((_, i) => conteggiAi[i] > 0 && conteggiAi[i] <= tetto)
+    .filter((_, i) => conteggiAi[i] > 0 && conteggiAi[i] <= tettoGenerici)
     .map((c) => ({ ...c, peso: 0.4 }))
     .slice(0, 8);
   const concetti = [...piano.concetti, ...validati];
@@ -205,6 +227,19 @@ export async function generaDossier(
   const elencati = ordinati.slice(0, MAX_FONTI);
   if (ordinati.length > MAX_FONTI) avvisa(`Trovate ${ordinati.length} fonti: l'indice mostra le ${MAX_FONTI} più pertinenti.`);
   const daAnalizzare = selezionaAnalizzate(elencati);
+  // Piano entro il tetto: l'analisi (caso peggiore) non supera il 55% del
+  // budget del dossier; se servisse, le fonti meno pertinenti restano menzioni.
+  if (usaAi) {
+    const perPunteggio = elencati.filter((c) => daAnalizzare.has(c.id)).sort((a, b) => a.punteggio - b.punteggio);
+    let tagliate = 0;
+    while (daAnalizzare.size > 12 && stimaMassimaAnalisi(daAnalizzare.size) * MARGINE > tetto.limite * QUOTA_ANALISI) {
+      const c = perPunteggio.shift();
+      if (!c) break;
+      daAnalizzare.delete(c.id);
+      tagliate++;
+    }
+    if (tagliate) avvisa(`Per restare nel budget di neuroni del dossier, ${tagliate} fonti meno pertinenti restano tra le menzioni.`);
+  }
 
   // Numerazione cronologica: [F1] e' la fonte piu' antica; le non datate in fondo.
   const cronologico = [...elencati].sort(
@@ -303,6 +338,7 @@ export async function generaDossier(
       chiamateAi += esito.chiamate;
       for (const f of analizzate) f.nota = esito.note.get(f.n);
       if (esito.automatiche) avvisa(`${esito.automatiche} fonti sono state sintetizzate senza modello (nota estratta direttamente dal testo).`);
+      if (esito.budgetEsaurito) aiEsaurita = true;
     } catch (err) {
       if (signal?.aborted) return null;
       avvisa(`Analisi con il modello non riuscita (${(err as Error).message.slice(0, 90)}): note estratte direttamente dai testi.`);
@@ -314,9 +350,9 @@ export async function generaDossier(
   if (!usaAi) emit({ tipo: "note", note: analizzate.map((f) => ({ n: f.n, nota: f.nota! })), fatte: analizzate.length, totali: analizzate.length });
   // Quota esaurita durante l'analisi (anche da un'altra richiesta: e' per
   // account): la stesura fallirebbe capitolo per capitolo, quindi si salta.
-  if (usaAi && quotaAiEsaurita()) {
+  if (usaAi && (quotaAiEsaurita() || aiEsaurita)) {
     usaAi = false;
-    avvisa(`${messaggioQuota()} La quota si è esaurita durante la generazione: le fonti non ancora analizzate hanno una nota estratta dal testo e i capitoli non sono stati scritti.`, true);
+    avvisa(`${messaggioQuota()} Il budget si è esaurito durante la generazione: le fonti non ancora analizzate hanno una nota estratta dal testo e i capitoli non sono stati scritti.`, true);
   }
 
   /* ------------------------------ 5. Stesura ------------------------------ */
@@ -329,7 +365,24 @@ export async function generaDossier(
   let citRimosse = 0;
   let sezioniRiuscite = 0;
 
-  const pianoS: SezionePiano[] = usaAi ? pianoSezioni(piano.argomento, analizzate) : [];
+  let pianoS: SezionePiano[] = usaAi ? pianoSezioni(piano.argomento, analizzate) : [];
+  // La stesura parte solo se ci sta per intero (nel tetto del dossier e nel
+  // budget di oggi): meglio nessun capitolo che capitoli a meta'.
+  if (pianoS.length) {
+    const servono = stimaNeuroniStesura(pianoS) * MARGINE;
+    const residuo = Math.min(tetto.limite - tetto.usati, await disponibili("studio").catch(() => 0));
+    if (servono > residuo) {
+      const fattore = residuo / servono;
+      if (fattore >= 0.6) {
+        pianoS = pianoS.map((s) => ({ ...s, maxTokens: Math.max(400, Math.floor(s.maxTokens * fattore * 0.95)) }));
+        avvisa("Capitoli più brevi del solito per restare nel budget di neuroni del dossier.");
+      } else {
+        pianoS = [];
+        usaAi = false;
+        avvisa(`${messaggioQuota()} Il budget residuo non basta per scrivere i capitoli: restano fonti, note e timeline.`, true);
+      }
+    }
+  }
   const stato = pianoS.map(() => ({ pezzi: [] as string[], finito: false, testo: "", parziale: "", ok: false }));
   let attivo = -1;
   const iniziate = new Set<string>();
@@ -392,7 +445,7 @@ export async function generaDossier(
       const motivo = scadenzaStesura.aborted
         ? "tempo massimo raggiunto"
         : quotaEsaurita(err)
-          ? "quota giornaliera di Workers AI esaurita"
+          ? "budget AI esaurito"
           : (err as Error).message.slice(0, 120);
       stato[i].testo = `${stato[i].parziale.trim() ? `${stato[i].parziale.trim()}\n\n` : ""}_Stesura di questa parte non completata (${motivo}). Le fonti restano consultabili nella timeline e nell'indice: usa "Rigenera" per riprovare._`;
       avvisi.push(`Una parte del dossier ("${s.titolo}${s.sottotitolo ? ` ${s.sottotitolo}` : ""}") non è stata scritta.`);
@@ -451,6 +504,7 @@ export async function generaDossier(
       ...statBase,
       durataMs: Date.now() - t0,
       chiamateAi,
+      neuroni: Math.round(tetto.usati),
       modello: MODELLO_STESURA === MODELLO_ANALISI ? MODELLO_STESURA : `${MODELLO_ANALISI} + ${MODELLO_STESURA}`,
     },
     avvisi,

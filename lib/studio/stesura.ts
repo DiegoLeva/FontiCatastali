@@ -1,4 +1,5 @@
-import { chatStream, type ChatMessage } from "@/lib/cloudflare";
+import { chatStream, LLM_MODEL, type ChatMessage } from "@/lib/cloudflare";
+import { neuroni, stimaToken } from "@/lib/ai/budget";
 import type { FonteStudio, NotaFonte } from "./tipi";
 
 /**
@@ -11,17 +12,17 @@ import type { FonteStudio, NotaFonte } from "./tipi";
  * ferma per il limite, la stesura riprende da dove si e' interrotta.
  */
 
-export const MODELLO_STESURA = process.env.CF_STUDIO_WRITE_MODEL || process.env.CF_LLM_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export const MODELLO_STESURA = process.env.CF_STUDIO_WRITE_MODEL || LLM_MODEL;
+/** Riprese dopo un troncamento (ognuna e' una chiamata in piu'). */
+const RIPRESE_MAX = 1;
 
-const SYSTEM = `Sei un docente di diritto catastale che scrive un manuale di studio per professionisti (geometri, ingegneri, notai, funzionari). Italiano rigoroso, chiaro, scorrevole.
-
-REGOLE INVIOLABILI
-1. Usa ESCLUSIVAMENTE le SCHEDE DELLE FONTI fornite. Nessuna conoscenza esterna.
-2. Ogni affermazione normativa porta la citazione della scheda da cui deriva, nella forma [F12] (piu' fonti: [F3, F12]).
-3. Non scrivere numeri di leggi, articoli, circolari, date o importi che non compaiono nelle schede. Non attribuire a una fonte cio' che la sua scheda non dice.
-4. Se un passaggio storico o un dato manca nelle schede, dichiaralo esplicitamente (es. "Nel database non risultano fonti che documentino ...").
-5. Niente titoli di primo o secondo livello (#, ##): il titolo della sezione lo aggiunge il sistema. Puoi usare paragrafi, elenchi puntati e grassetto.
-6. Niente premesse ("In questa sezione...") ne' conclusioni di rito.`;
+const SYSTEM = `Docente di diritto catastale: scrivi un manuale di studio per professionisti, in italiano rigoroso e chiaro.
+REGOLE
+1. Solo le SCHEDE fornite, nessuna conoscenza esterna.
+2. Ogni affermazione normativa cita la sua scheda: [F12] (piu' fonti: [F3, F12]).
+3. Nessun numero di legge, articolo, data o importo assente dalle schede; non attribuire a una fonte cio' che la scheda non dice.
+4. Se manca un passaggio storico o un dato, dichiaralo ("Nel database non risultano fonti che…").
+5. Niente titoli # o ##, niente premesse o conclusioni di rito; paragrafi, elenchi e grassetto ammessi.`;
 
 export interface SezionePiano {
   id: string;
@@ -37,11 +38,11 @@ export function scheda(f: FonteStudio): string {
   const n = f.nota as NotaFonte;
   const anno = f.anno === "0000" ? "s.d." : f.anno;
   const righe = [
-    `[F${f.n}] ${anno} · ${f.tipo} · «${f.titolo}»${n?.estremi ? ` · estremi: ${n.estremi}` : ""} · ruolo: ${n?.ruolo ?? "contesto"} · stato: ${n?.stato ?? "incerto"}`,
-    `  sintesi: ${n?.sintesi || "—"}`,
+    `[F${f.n}] ${anno} · ${f.tipo} · «${f.titolo.slice(0, 140)}»${n?.estremi ? ` · ${n.estremi}` : ""} · ${n?.ruolo ?? "contesto"} · ${n?.stato ?? "incerto"}`,
+    `  ${n?.sintesi || "—"}`,
   ];
   if (f.annoDubbio) {
-    righe.push(`  ATTENZIONE: l'anno ${anno} del database e' probabilmente errato (il testo cita il ${f.annoDubbio}): non usarla per datare l'evoluzione, segnala l'incongruenza se la citi.`);
+    righe.push(`  ATTENZIONE: anno ${anno} probabilmente errato (il testo cita il ${f.annoDubbio}): non usarlo per datare, segnala l'incongruenza.`);
   }
   if (n?.novita) righe.push(`  novità: ${n.novita}`);
   if (n?.rinvii?.length) righe.push(`  rinvii: ${n.rinvii.join("; ")}`);
@@ -83,7 +84,7 @@ export function pianoSezioni(argomento: string, analizzate: FonteStudio[]): Sezi
   piano.push({
     id: "inquadramento",
     titolo: "Cos'è e inquadramento",
-    maxTokens: 1100,
+    maxTokens: 900,
     messaggi: messaggi(
       argomento,
       `Scrivi la sezione "Cos'è e inquadramento": definisci l'istituto o il tema, il suo ambito di applicazione ATTUALE e i soggetti/atti coinvolti, in 2-4 paragrafi. Dai prevalenza alle fonti piu' recenti per descrivere la situazione attuale. Cita ogni affermazione.`,
@@ -98,7 +99,7 @@ export function pianoSezioni(argomento: string, analizzate: FonteStudio[]): Sezi
     piano.push({
       id: "origini",
       titolo: "Origini e finalità originaria",
-      maxTokens: 1000,
+      maxTokens: 800,
       messaggi: messaggi(
         argomento,
         `Scrivi la sezione "Origini e finalità originaria": da quale norma o atto risulta introdotto l'istituto nelle fonti disponibili e a cosa serviva in origine. Se la fonte piu' antica del database richiama una norma istitutiva che NON e' tra le schede, dillo esplicitamente ("la norma istitutiva, richiamata da [Fn], non e' presente nel database"). 1-3 paragrafi.`,
@@ -120,7 +121,7 @@ export function pianoSezioni(argomento: string, analizzate: FonteStudio[]): Sezi
       id: `evoluzione-${i + 1}`,
       titolo: "Evoluzione cronologica",
       sottotitolo: intervallo(parte),
-      maxTokens: 1700,
+      maxTokens: 1400,
       messaggi: messaggi(
         argomento,
         `Scrivi la parte ${i + 1} di ${parti.length} della sezione "Evoluzione cronologica" (periodo ${intervallo(parte)}).
@@ -140,7 +141,7 @@ OBBLIGATORIO: menziona e cita TUTTE le ${parte.length} fonti delle schede, nell'
   piano.push({
     id: "vigente",
     titolo: "Disciplina vigente e punti chiave operativi",
-    maxTokens: 1500,
+    maxTokens: 1200,
     messaggi: messaggi(
       argomento,
       `Scrivi la sezione "Disciplina vigente e punti chiave operativi":
@@ -155,9 +156,18 @@ Se le schede non bastano a stabilire la disciplina vigente su un punto, dichiara
   return piano;
 }
 
+/** Stima prudente (senza margine) dei neuroni di un piano di stesura. */
+export function stimaNeuroniStesura(piano: SezionePiano[]): number {
+  return piano.reduce((s, p) => {
+    const caratteri = p.messaggi.reduce((c, m) => c + m.content.length + 16, 0);
+    // Una ripresa possibile: in media meta' delle sezioni la usa con meta' output.
+    return s + neuroni(MODELLO_STESURA, stimaToken(caratteri), p.maxTokens) * 1.25;
+  }, 0);
+}
+
 /**
  * Esegue una sezione in streaming con ripresa automatica in caso di
- * troncamento (fino a 2 riprese).
+ * troncamento (al massimo RIPRESE_MAX riprese).
  */
 export async function scriviSezione(
   s: SezionePiano,
@@ -167,7 +177,7 @@ export async function scriviSezione(
   let testo = "";
   let chiamate = 0;
   let msgs = s.messaggi;
-  for (let tentativo = 0; tentativo < 3; tentativo++) {
+  for (let tentativo = 0; tentativo <= RIPRESE_MAX; tentativo++) {
     chiamate++;
     const r = await chatStream(msgs, onToken, {
       model: MODELLO_STESURA,
