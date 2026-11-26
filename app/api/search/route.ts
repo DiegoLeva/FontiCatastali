@@ -24,17 +24,31 @@ const MAX_QUERY_LEN = 200;
  */
 const MIN_EXACT_LEN = 3;
 
-/** Ricerca FTS5 (default): tokenizzata, accent-insensitive, con snippet+bm25. */
+/**
+ * Ricerca FTS5 (default): tokenizzata, accent-insensitive, con snippet+bm25.
+ *
+ * Prima si ordina per bm25 e si tengono i primi MAX_RESULTS (CTE), POI si
+ * calcolano gli snippet: snippet() rilegge e ritokenizza il testo integrale,
+ * e nella forma ingenua veniva calcolato per TUTTE le corrispondenze (centinaia
+ * per "voltura*") prima del LIMIT. Stesse righe, stesso ordine, meno lavoro.
+ */
 const FTS_SQL = `
+  WITH top AS (
+    SELECT rowid AS rid, bm25(documenti_fts, 1.0, 8.0, 4.0) AS rank
+    FROM documenti_fts
+    WHERE documenti_fts MATCH ?
+    ORDER BY rank
+    LIMIT ${MAX_RESULTS}
+  )
   SELECT d.id AS id, d.cartella_origine AS cartella, d.nuovo_nome_file AS nomeFile,
     d.titolo AS titolo, d.anno AS anno,
     snippet(documenti_fts, 0, '${MARK_START}', '${MARK_END}', ' … ', 64) AS snip,
-    bm25(documenti_fts, 1.0, 8.0, 4.0) AS rank
-  FROM documenti_fts
-  JOIN documenti d ON d.id = documenti_fts.rowid
+    top.rank AS rank
+  FROM top
+  JOIN documenti_fts ON documenti_fts.rowid = top.rid
+  JOIN documenti d ON d.id = top.rid
   WHERE documenti_fts MATCH ?
-  ORDER BY rank
-  LIMIT ${MAX_RESULTS};
+  ORDER BY top.rank, d.id;
 `;
 
 /**
@@ -111,7 +125,7 @@ export async function GET(
         rowToHit(row, exactSnippetHtml(String(row.snip ?? ""), q))
       );
     } else {
-      const rs = await db.execute({ sql: FTS_SQL, args: [match] });
+      const rs = await db.execute({ sql: FTS_SQL, args: [match, match] });
       hits = rs.rows.map((row) =>
         rowToHit(row, snippetToSafeHtml(String(row.snip ?? "")))
       );
