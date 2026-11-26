@@ -86,6 +86,13 @@ async function main() {
   const futuro = normalizzaMetadati({ id: 689, cartella: "17 - Note", nomeFile: "2083 - Nota - Valori.pdf", titolo: "Valori", anno: 0, testo: "Tabella dei valori" });
   verifica(!futuro.anno, "anno futuro nel nome del file scartato");
 
+  const preambolo = normalizzaMetadati({ id: 619, cartella: "06 - Decreti Legge", nomeFile: "2002 - DL - Adeguamento onorari periti e consulenti tecnici.pdf", titolo: "Adeguamento onorari periti e consulenti tecnici", anno: 2002, testo: "Ministero della Giustizia IL DIRETTORE GENERALE Vista la legge 8 luglio 1980, n. 319, recante compensi spettanti ai periti; Visto il decreto del Presidente della Repubblica 30 maggio 2002, n. 115" });
+  verifica(!preambolo.anno, "atti citati nel preambolo («Vista la legge 8 luglio 1980») ignorati");
+  const sitoAde = normalizzaMetadati({ id: 2460, cartella: "00 - Sito Ade", nomeFile: "Provvedimento del 17112009_Provvedimento interdirigenziale 17.11.2009 - Estensione MUI.pdf", titolo: "Provvedimento del 17112009_Provvedimento interdirigenziale 17.11.2009 - Estensione MUI", anno: 2009, testo: "IL DIRETTORE DELL'AGENZIA DEL TERRITORIO Visto il decreto legislativo 18 dicembre 1997, n. 463" });
+  verifica(!sitoAde.anno && sitoAde.tipoAtto === "Provvedimento" && sitoAde.data === "2009-11-17", `data nel titolo grezzo prevale (${sitoAde.estremi})`);
+  const bollettino = normalizzaMetadati({ id: 1484, cartella: "02 - Circolari", nomeFile: "1980 - Circ. 3 - Variazioni della categoria di effettiva consistenza.pdf", titolo: "Circ. 3 - Variazioni della categoria di effettiva consistenza", anno: 1980, testo: "CIRCOLARE N. 24 Roma, 30 settembre 1978 OGGETTO: imposta di bollo" });
+  verifica(!bollettino.anno && bollettino.revisione.some((m) => /n\. 3/.test(m)), "numero del nome diverso da quello dell'intestazione: solo revisione");
+
   const senzaAnno = normalizzaMetadati({ id: 9006, cartella: "00 - Sito Ade", nomeFile: "Provvedimento_26.01.2021.pdf", titolo: "Provvedimento_26.01.2021", anno: 0, testo: "PROVVEDIMENTO del 26.01.2021 Modalità di consultazione" });
   verifica(senzaAnno.anno?.valore === 2021 && senzaAnno.tipoAtto === "Provvedimento", `anno mancante recuperato dall'intestazione (${senzaAnno.anno?.motivo})`);
 
@@ -122,6 +129,13 @@ async function main() {
   verifica(log.length === 3 && log.some((l) => l.campo === "anno" && l.prima === "2012" && l.dopo === "2011"), "registro delle modifiche con il valore precedente");
   const fts = await db.execute({ sql: `SELECT rowid FROM documenti_fts WHERE documenti_fts MATCH ?`, args: ["sostitutiva"] });
   verifica(fts.rows.length === 1, "indice FTS allineato al nuovo titolo");
+
+  for (const id of [6, 7, 8]) {
+    await db.execute({ sql: `INSERT INTO documenti (id, cartella_origine, nuovo_nome_file, anno, titolo, tema, testo_estratto) VALUES (?, '06 - Decreti Legge', ?, 2002, ?, '', ?)`, args: [id, `2002 - DL - Atto ${id}.pdf`, `Atto ${id} di attuazione`, lungo(`LEGGE 23 agosto 1988, n. 400 Disciplina dell'attivita' di Governo. Documento ${id}`)] });
+  }
+  const ripetuta = await eseguiBonifica(db, { applica: false });
+  verifica(!ripetuta.modifiche.some((m) => [6, 7, 8].includes(m.id)) && ripetuta.revisione.some((x) => x.id === 6 && x.motivi.some((t) => /3 documenti/.test(t))), "stessa intestazione in 3 documenti: probabile atto citato, nessuna correzione");
+  await db.execute(`DELETE FROM documenti WHERE id IN (6, 7, 8)`);
 
   const ancora = await eseguiBonifica(db, { applica: true });
   verifica(ancora.modificati === 0 && ancora.duplicati === 1, "idempotente: seconda esecuzione senza modifiche");

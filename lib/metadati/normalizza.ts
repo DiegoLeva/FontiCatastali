@@ -261,24 +261,41 @@ const INTESTAZIONI: Array<[RegExp, string]> = [
   [/\bnota\s+(?:prot\.?\s*)?n\.?\s*°?\s*(\d[\d/.-]*)/i, "Nota"],
 ];
 
+/** Parole che precedono un atto CITATO, non l'intestazione ("Visto il decreto..."). */
+const CITAZIONE = /(?:\bvist[oaie]|\bai sensi|\bdi cui|\bprevist[oaie]|\bmodificat[oaie]|\bconvertit[oaie]|\bin attuazione|\brichiamat[oaie]|\bart\.?|\barticol[oi]|\bcomma|\bdal|\bdall[oa']|\bdel|\bdell[oa']|\bdegli|\bal|\balla|\bcon|\bnel|\bnella|\bsecondo|\bcome|\bdalla|\bsulla|\bper)\s*(?:il|la|lo|l'|i|gli|le)?\s*$/i;
+/** Leggi e decreti: la vera intestazione e' in maiuscolo ("DECRETO LEGISLATIVO 18 settembre 2024, n. 139"). */
+const LEGISLATIVI = new Set(["Decreto-legge", "Decreto legislativo", "D.P.R.", "Regio decreto", "Decreto ministeriale", "Decreto", "Legge"]);
+const maiuscolo = (s: string) => {
+  const parola = s.match(/\p{L}+/u)?.[0] ?? "";
+  return parola.length > 1 && parola === parola.toUpperCase();
+};
+
 /** L'intestazione piu' in alto nelle prime righe (null se non c'e'). */
 export function intestazione(testo: string): Intestazione | null {
   const testa = testo.slice(0, 600).replace(/\s+/g, " ");
   let migliore: Intestazione | null = null;
-  for (const [re, tipo] of INTESTAZIONI) {
-    const m = re.exec(testa);
-    if (!m || (migliore && m.index >= migliore.posizione)) continue;
-    let numero: string | null = null;
-    let data: string | null = null;
-    if (tipo === "Circolare" || tipo === "Risoluzione" || tipo === "Nota") numero = m[1];
-    else if (tipo === "Provvedimento") {
-      numero = m[1] ?? null;
-      data = dataIso(m[2]);
-    } else {
-      data = dataIso(m[1]);
-      numero = m[2] ?? null;
+  for (const [base, tipo] of INTESTAZIONI) {
+    const re = new RegExp(base.source, base.flags.includes("g") ? base.flags : `${base.flags}g`);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(testa))) {
+      if (migliore && m.index >= migliore.posizione) break;
+      const prima = testa.slice(Math.max(0, m.index - 28), m.index);
+      const citato = CITAZIONE.test(prima);
+      const formale = !LEGISLATIVI.has(tipo) || m.index < 30 || maiuscolo(m[0]);
+      if (citato || !formale) continue;
+      let numero: string | null = null;
+      let data: string | null = null;
+      if (tipo === "Circolare" || tipo === "Risoluzione" || tipo === "Nota") numero = m[1];
+      else if (tipo === "Provvedimento") {
+        numero = m[1] ?? null;
+        data = dataIso(m[2]);
+      } else {
+        data = dataIso(m[1]);
+        numero = m[2] ?? null;
+      }
+      migliore = { tipo, numero: numero ? numero.replace(/\s+/g, "").toUpperCase().replace(/^0+(?=\d)/, "") : null, data, posizione: m.index };
+      break;
     }
-    migliore = { tipo, numero: numero ? numero.replace(/\s+/g, "").toUpperCase().replace(/^0+(?=\d)/, "") : null, data, posizione: m.index };
   }
   if (migliore && !migliore.data) {
     // Data di emanazione: "CIRCOLARE n. 3 del 16.10.2009" (subito dopo
@@ -293,6 +310,24 @@ export function intestazione(testo: string): Intestazione | null {
   const annoNumero = migliore?.numero?.match(/\/((?:18|19|20)\d{2})$/)?.[1];
   if (migliore?.data && annoNumero && migliore.data.slice(0, 4) !== annoNumero) migliore.data = null;
   return migliore;
+}
+
+/**
+ * Data esplicita nel titolo o nel nome file ("Provvedimento del 17112009",
+ * "Dlgs 18121997", "Provvedimento_26.01.2021", "2019_07_01_CIRCOLARE",
+ * "del 23 gennaio 2024"): per i nomi grezzi del sito AdE e' la fonte migliore.
+ */
+export function dataDaTitolo(titolo: string, nomeFile: string): string | null {
+  const t = `${titolo} ${/^https?:/i.test(nomeFile) ? "" : nomeFile.replace(/\.pdf$/i, "")}`;
+  const testuale = t.match(new RegExp(`(\\d{1,2})\\s*(?:°|º)?\\s+(${MESI.join("|")})\\s+(\\d{4})`, "i"));
+  if (testuale) return dataIso(testuale[0]);
+  const separata = t.match(/(?<!\d)(\d{1,2})[._-](\d{1,2})[._-](\d{4})(?!\d)/);
+  if (separata) return dataIso(`${separata[1]}/${separata[2]}/${separata[3]}`);
+  const inversa = t.match(/(?<!\d)((?:19|20)\d{2})[._-](\d{2})[._-](\d{2})(?!\d)/);
+  if (inversa) return dataIso(`${inversa[3]}/${inversa[2]}/${inversa[1]}`);
+  const compatta = t.match(/(?<!\d)(\d{2})(\d{2})((?:19|20)\d{2})(?!\d)/);
+  if (compatta) return dataIso(`${compatta[1]}/${compatta[2]}/${compatta[3]}`);
+  return null;
 }
 
 /** "Roma, 18 novembre 2011" (luogo e data di firma) nelle prime righe. */
@@ -356,6 +391,14 @@ function numeroDaSchema(numero: string | null, anno: number): string | null {
   return numero;
 }
 
+/** Numero dai titoli grezzi: "Dlgs 18121997 n463", "... n. 139", "Circolare11_2023". */
+function numeroDaTitolo(titolo: string): string | null {
+  const circ = titolo.match(/^(?:circolare|risoluzione)[\s_-]*n?\.?[\s_-]*(\d{1,3})[\s_-]+((?:19|20)\d{2})\b/i);
+  if (circ) return `${Number(circ[1])}/${circ[2]}`;
+  const n = titolo.match(/(?:\bn\.?\s*°?\s*|\bn(?=\d))(\d{1,6}(?:\s*\/\s*[A-Za-z0-9]+)?)\b/i);
+  return n ? n[1].replace(/\s+/g, "").toUpperCase() : null;
+}
+
 function estremi(tipo: string, numero: string | null, data: string | null): string | null {
   if (!numero && !data) return null;
   return `${tipo}${numero ? ` n. ${numero}` : ""}${data ? ` del ${dataLeggibile(data)}` : ""}`;
@@ -377,7 +420,7 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   const testaAffidabile = !!testa && testa.posizione < 320 && !!(testa.numero || testa.data);
   if (testaAffidabile && testa) {
     const generico = ["Decreto", "Documento", "Allegato"].includes(tipoAtto) || TIPO_STUDIO[tipoAtto] === TIPO_STUDIO[testa.tipo];
-    if (!divulgativa && (generico || /sito ade/.test(cartellaNorm))) {
+    if (!divulgativa && (generico || (/sito ade/.test(cartellaNorm) && !daTitolo))) {
       tipoAtto = testa.tipo === "Decreto" && TIPO_STUDIO[tipoAtto] === "Decreto" && tipoAtto !== "Decreto" ? tipoAtto : testa.tipo;
       origineTipo = "testo";
     } else if (TIPO_STUDIO[tipoAtto] !== TIPO_STUDIO[testa.tipo]) {
@@ -387,9 +430,16 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
 
   // 2) Numero e data.
   const concorde = !!testa && TIPO_STUDIO[testa.tipo] === TIPO_STUDIO[tipoAtto];
-  let numero = concorde && testa?.numero ? testa.numero : numeroDaSchema(schema?.numero ?? null, d.anno || schema?.anno || 0);
+  const numeroNome = numeroDaSchema(schema?.numero ?? null, d.anno || schema?.anno || 0) ?? numeroDaTitolo(d.titolo);
+  // Numero del nome diverso da quello dell'intestazione ("Circ. 3" contro
+  // "CIRCOLARE n. 24"): bollettini o raccolte, l'intestazione non e' affidabile.
+  const discorde =
+    concorde && !!testa?.numero && !!numeroNome && !LEGISLATIVI.has(tipoAtto) && parseInt(testa.numero, 10) !== parseInt(numeroNome, 10);
+  if (discorde) revisione.push(`il nome indica il n. ${numeroNome}, l'intestazione il n. ${testa!.numero}`);
+  let numero = concorde && testa?.numero && !discorde ? testa.numero : numeroNome;
   const firma = !divulgativa && PRASSI.test(cartellaNorm) ? dataRoma(d.testo) : null;
-  const data = concorde && testa?.data ? testa.data : firma;
+  const dataTitolo = dataDaTitolo(d.titolo, d.nomeFile);
+  const data = dataTitolo ?? (concorde && testa?.data && !discorde ? testa.data : firma);
   // "Decr. 27" con "DECRETO 27 maggio 2015": il numero del nome e' il giorno.
   if (numero && data && !testa?.numero && Number(numero) === Number(data.slice(8, 10))) numero = null;
 
@@ -397,7 +447,9 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   let anno: Proposta["anno"] = null;
   const annoData = data ? Number(data.slice(0, 4)) : null;
   const derivata = OPERE_DERIVATE.test(d.titolo) || OPERE_DERIVATE.test(schema?.oggetto ?? "") || divulgativa;
-  if (!d.anno) {
+  if (dataTitolo) {
+    if (Number(dataTitolo.slice(0, 4)) !== d.anno) anno = { valore: Number(dataTitolo.slice(0, 4)), confidenza: "alta", motivo: `data nel titolo: ${dataLeggibile(dataTitolo)}` };
+  } else if (!d.anno) {
     if (annoData && testaAffidabile) anno = { valore: annoData, confidenza: "alta", motivo: `intestazione: ${dataLeggibile(data!)}` };
     else if (annoData && data === firma) anno = { valore: annoData, confidenza: "media", motivo: `data di firma «Roma, ${dataLeggibile(data!)}»` };
     else if (schema?.anno) anno = { valore: schema.anno, confidenza: "media", motivo: "anno nel nome del file" };
@@ -412,7 +464,7 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   } else if (annoData && annoData !== d.anno) {
     const citati = [...d.testo.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
     const coerente = citati.every((a) => a <= annoData + 1);
-    if (testaAffidabile && concorde && !derivata) {
+    if (testaAffidabile && concorde && !derivata && !discorde) {
       anno = { valore: annoData, confidenza: "alta", motivo: `intestazione: ${tipoAtto}${numero ? ` n. ${numero}` : ""} del ${dataLeggibile(data!)}` };
     } else if (!testaAffidabile && data === firma && refuso(d.anno, annoData) && coerente && !derivata) {
       anno = { valore: annoData, confidenza: "media", motivo: `refuso dell'anno: firmato «Roma, ${dataLeggibile(data!)}»` };

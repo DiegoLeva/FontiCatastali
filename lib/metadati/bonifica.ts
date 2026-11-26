@@ -221,6 +221,18 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
     }
   }
 
+  // Fase 1: lettura e proposte per tutti i documenti dell'ambito.
+  interface Elaborato {
+    d: Riga;
+    p: Proposta;
+    tipoAtto: string;
+    numero: string | null;
+    data: string | null;
+    estremi: string | null;
+    duplicatoDi: number | null;
+  }
+  const elaborati: Elaborato[] = [];
+  const correzioniCanonico: Array<{ copia: number; canonico: number }> = [];
   let dopo = opz.daId ?? 0;
   for (;;) {
     if (Date.now() - t0 > budgetMs) break;
@@ -229,17 +241,14 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
       r.completata = true;
       break;
     }
-    const istruzioni: InStatement[] = [];
     for (const d of righe) {
       dopo = d.id;
-      r.esaminati++;
       const p: Proposta = normalizzaMetadati({ id: d.id, cartella: d.cartella, nomeFile: d.nomeFile, titolo: d.titolo, anno: d.anno, testo: d.inizio } satisfies DocMeta);
       const noto = opz.noti?.get(d.id);
       const tipoAtto = noto?.tipo && TIPO_STUDIO[noto.tipo] ? noto.tipo : p.tipoAtto;
       const numero = noto?.numero ?? p.numero;
       const data = noto?.data ?? p.data;
       const estremi = noto ? (numero || data ? `${tipoAtto}${numero ? ` n. ${numero}` : ""}${data ? ` del ${dataLeggibile(data)}` : ""}` : null) : p.estremi;
-
       // Duplicati esatti: il canonico e' il primo senza suffisso "(n)".
       let duplicatoDi: number | null = null;
       if (d.impronta) {
@@ -247,64 +256,86 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
         const copia = /\(\d+\)\.pdf$/i.test(d.nomeFile);
         if (!primo) primiPerImpronta.set(d.impronta, { id: d.id, copia });
         else if (primo.copia && !copia) {
-          // Il canonico diventa questo; il precedente e' la copia.
-          istruzioni.push({ sql: `UPDATE documenti_meta SET duplicato_di = ? WHERE doc_id = ?`, args: [d.id, primo.id] });
+          correzioniCanonico.push({ copia: primo.id, canonico: d.id });
           primiPerImpronta.set(d.impronta, { id: d.id, copia });
-          r.duplicati++;
         } else duplicatoDi = primo.id;
       }
-      if (duplicatoDi) r.duplicati++;
-
-      r.tipologie[tipoAtto] = (r.tipologie[tipoAtto] ?? 0) + 1;
-      if (p.origineTipo === "testo") r.tipologieDaTesto++;
-      if (estremi) r.conEstremi++;
-      if (data) r.conData++;
-      r.conMetadati++;
-      istruzioni.push({
-        sql: `INSERT INTO documenti_meta (doc_id, tipo_atto, numero_atto, data_atto, estremi, duplicato_di, revisione, aggiornato_il)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT(doc_id) DO UPDATE SET tipo_atto = excluded.tipo_atto, numero_atto = excluded.numero_atto,
-                data_atto = excluded.data_atto, estremi = excluded.estremi, duplicato_di = excluded.duplicato_di,
-                revisione = excluded.revisione, aggiornato_il = excluded.aggiornato_il`,
-        args: [d.id, tipoAtto, numero, data, estremi, duplicatoDi, REVISIONE_REGOLE, adesso()],
-      });
-
-      // Correzioni su `documenti` (solo regole ad alta confidenza).
-      const set: string[] = [];
-      const args: Array<string | number> = [];
-      if (p.anno && (p.anno.confidenza === "alta" || p.anno.confidenza === "media")) {
-        set.push("anno = ?");
-        args.push(p.anno.valore);
-        r.anni++;
-        if (!d.anno) r.anniMancantiRecuperati++;
-        r.modifiche.push({ id: d.id, campo: "anno", prima: String(d.anno || "s.d."), dopo: String(p.anno.valore), motivo: p.anno.motivo, confidenza: p.anno.confidenza });
-      }
-      if (p.titolo) {
-        set.push("titolo = ?");
-        args.push(p.titolo.valore);
-        r.titoli++;
-        r.modifiche.push({ id: d.id, campo: "titolo", prima: d.titolo, dopo: p.titolo.valore, motivo: p.titolo.motivo, confidenza: "media" });
-      }
-      if (set.length) {
-        r.modificati++;
-        istruzioni.push({ sql: `UPDATE documenti SET ${set.join(", ")} WHERE id = ?`, args: [...args, d.id] });
-        for (const m of r.modifiche.filter((x) => x.id === d.id)) {
-          istruzioni.push({
-            sql: `INSERT INTO metadati_bonifica (esecuzione, doc_id, campo, prima, dopo, motivo, confidenza, applicato, creato_il) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [r.esecuzione, d.id, m.campo, m.prima, m.dopo, m.motivo, m.confidenza, opz.applica ? 1 : 0, adesso()],
-          });
-        }
-      }
-      if (p.revisione.length) {
-        r.daRevisionare++;
-        r.revisione.push({ id: d.id, titolo: d.titolo, cartella: d.cartella, anno: d.anno, motivi: p.revisione });
-      }
-    }
-    if (opz.applica && istruzioni.length) {
-      // I log delle modifiche si scrivono comunque solo applicando (prova = nessuna scrittura).
-      for (let i = 0; i < istruzioni.length; i += 60) await db.batch(istruzioni.slice(i, i + 60), "write");
+      elaborati.push({ d, p, tipoAtto, numero, data, estremi, duplicatoDi });
     }
     r.ultimoId = dopo;
+  }
+
+  // Fase 2: la stessa intestazione proposta per 3 o piu' documenti diversi e'
+  // quasi sempre un atto CITATO (preambolo, raccolta): niente correzione.
+  const firme = new Map<string, number>();
+  const firma = (e: Elaborato) => `${e.tipoAtto}|${e.numero ?? ""}|${e.data ?? ""}`;
+  for (const e of elaborati) if (e.p.anno?.motivo.startsWith("intestazione") && !e.duplicatoDi) firme.set(firma(e), (firme.get(firma(e)) ?? 0) + 1);
+  for (const e of elaborati) {
+    if (!e.p.anno?.motivo.startsWith("intestazione")) continue;
+    const n = firme.get(firma(e)) ?? 0;
+    const numeroNelTitolo = !!e.numero && new RegExp(`(?<!\\d)${e.numero.split("/")[0]}(?!\\d)`).test(`${e.d.titolo} ${e.d.nomeFile}`);
+    if (n >= 3 && !numeroNelTitolo) {
+      e.p.revisione.push(`la stessa intestazione (${e.estremi ?? e.tipoAtto}) compare in ${n} documenti: probabile atto citato, anno non corretto`);
+      e.p.anno = null;
+    }
+  }
+
+  // Fase 3: rapporto e scritture.
+  const istruzioni: InStatement[] = [];
+  for (const { d, p, tipoAtto, numero, data, estremi, duplicatoDi } of elaborati) {
+    r.esaminati++;
+    if (duplicatoDi) r.duplicati++;
+    r.tipologie[tipoAtto] = (r.tipologie[tipoAtto] ?? 0) + 1;
+    if (p.origineTipo === "testo") r.tipologieDaTesto++;
+    if (estremi) r.conEstremi++;
+    if (data) r.conData++;
+    r.conMetadati++;
+    istruzioni.push({
+      sql: `INSERT INTO documenti_meta (doc_id, tipo_atto, numero_atto, data_atto, estremi, duplicato_di, revisione, aggiornato_il)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET tipo_atto = excluded.tipo_atto, numero_atto = excluded.numero_atto,
+              data_atto = excluded.data_atto, estremi = excluded.estremi, duplicato_di = excluded.duplicato_di,
+              revisione = excluded.revisione, aggiornato_il = excluded.aggiornato_il`,
+      args: [d.id, tipoAtto, numero, data, estremi, duplicatoDi, REVISIONE_REGOLE, adesso()],
+    });
+    const set: string[] = [];
+    const args: Array<string | number> = [];
+    const mie: Modifica[] = [];
+    if (p.anno && (p.anno.confidenza === "alta" || p.anno.confidenza === "media")) {
+      set.push("anno = ?");
+      args.push(p.anno.valore);
+      r.anni++;
+      if (!d.anno) r.anniMancantiRecuperati++;
+      mie.push({ id: d.id, campo: "anno", prima: String(d.anno || "s.d."), dopo: String(p.anno.valore), motivo: p.anno.motivo, confidenza: p.anno.confidenza });
+    }
+    if (p.titolo) {
+      set.push("titolo = ?");
+      args.push(p.titolo.valore);
+      r.titoli++;
+      mie.push({ id: d.id, campo: "titolo", prima: d.titolo, dopo: p.titolo.valore, motivo: p.titolo.motivo, confidenza: "media" });
+    }
+    if (set.length) {
+      r.modificati++;
+      r.modifiche.push(...mie);
+      istruzioni.push({ sql: `UPDATE documenti SET ${set.join(", ")} WHERE id = ?`, args: [...args, d.id] });
+      for (const m of mie) {
+        istruzioni.push({
+          sql: `INSERT INTO metadati_bonifica (esecuzione, doc_id, campo, prima, dopo, motivo, confidenza, applicato, creato_il) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [r.esecuzione, d.id, m.campo, m.prima, m.dopo, m.motivo, m.confidenza, opz.applica ? 1 : 0, adesso()],
+        });
+      }
+    }
+    if (p.revisione.length) {
+      r.daRevisionare++;
+      r.revisione.push({ id: d.id, titolo: d.titolo, cartella: d.cartella, anno: d.anno, motivi: p.revisione });
+    }
+  }
+  for (const c of correzioniCanonico) {
+    istruzioni.push({ sql: `UPDATE documenti_meta SET duplicato_di = ? WHERE doc_id = ?`, args: [c.canonico, c.copia] });
+    r.duplicati++;
+  }
+  if (opz.applica && istruzioni.length) {
+    for (let i = 0; i < istruzioni.length; i += 60) await db.batch(istruzioni.slice(i, i + 60), "write");
   }
 
   r.durataMs = Date.now() - t0;
