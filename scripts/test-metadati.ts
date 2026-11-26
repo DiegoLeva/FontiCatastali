@@ -79,6 +79,13 @@ async function main() {
   const corsoOgg = normalizzaMetadati({ id: 9005, cartella: "05 - Corsi e Indicazioni", nomeFile: "s.d. - Corso - Non c'è testo da elaborare.pdf", titolo: "Non c'è testo da elaborare", anno: 0, testo: "Agenzia del Territorio OGGETTO: Aggiornamento della mappa per la fascia demaniale marittima. Premessa ..." });
   verifica(corsoOgg.titolo?.valore === "Aggiornamento della mappa per la fascia demaniale marittima", `titolo ricavato dall'OGGETTO del testo («${corsoOgg.titolo?.valore}»)`);
 
+  const c14 = normalizzaMetadati({ id: 179, cartella: "02 - Circolari", nomeFile: "2007 - Circ. 14 - Dichiarazioni immobili centrali eoliche categoria D1.pdf", titolo: "Circ. 14 - Dichiarazioni immobili centrali eoliche categoria D1", anno: 2007, testo: "Pag. 1 di 7 CIRCOLARE n. 14/2007 PROT. n. 91294 ENTE EMITTENTE: Direzione centrale Cartografia, Catasto e Pubblicità Immobiliare OGGETTO: Circolare n. 4 del 16 maggio 2006 – Chiarimenti in materia di dichiarazioni di immobili ricompresi nella categoria D/1 – Le centrali eoliche. DESTINATARI: Direzioni Centrali DATA DECORRENZA: Data della presente Roma, 22 novembre 2007 Firmato: Carlo CANNAFOGLIA" });
+  verifica(c14.numero === "14/2007" && c14.data === "2007-11-22" && !c14.anno, `atto citato nell'OGGETTO ignorato: data di firma (${c14.estremi})`);
+  const allegato = normalizzaMetadati({ id: 375, cartella: "02 - Circolari", nomeFile: "1989 - Circ. 3 - Elenco delle deroghe catastali vigenti.pdf", titolo: "Circ. 3 - Elenco delle deroghe catastali vigenti", anno: 1989, testo: "ALLEGATO n. 3 Direzione Centrale Cartografia, Catasto e Pubblicità Immobiliare CIRCOLARE n. 3 del 16.10.2009 - Prot. n.° 54825 Pag. 1 di 1 ELENCO DELLE DEROGHE ATTUALMENTE PREVISTE (cfr. Circolare n. 5 del 30 ottobre 1989)" });
+  verifica(allegato.data === "2009-10-16" && allegato.anno?.valore === 2009, `allegato della Circolare 3/2009 registrato nel 1989: anno corretto (${allegato.anno?.motivo})`);
+  const futuro = normalizzaMetadati({ id: 689, cartella: "17 - Note", nomeFile: "2083 - Nota - Valori.pdf", titolo: "Valori", anno: 0, testo: "Tabella dei valori" });
+  verifica(!futuro.anno, "anno futuro nel nome del file scartato");
+
   const senzaAnno = normalizzaMetadati({ id: 9006, cartella: "00 - Sito Ade", nomeFile: "Provvedimento_26.01.2021.pdf", titolo: "Provvedimento_26.01.2021", anno: 0, testo: "PROVVEDIMENTO del 26.01.2021 Modalità di consultazione" });
   verifica(senzaAnno.anno?.valore === 2021 && senzaAnno.tipoAtto === "Provvedimento", `anno mancante recuperato dall'intestazione (${senzaAnno.anno?.motivo})`);
 

@@ -203,7 +203,7 @@ export function schemaNome(nomeFile: string): SchemaNome | null {
   const m = base.match(/^(\d{4}|s\.d\.)\s+-\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.]*)\s*(\d+(?:\s?[A-Z])?)?\s+-\s+(.+)$/);
   if (!m) return null;
   const anno = /^\d{4}$/.test(m[1]) ? Number(m[1]) : null;
-  return { anno: anno && anno >= ANNO_MIN ? anno : null, abbreviazione: m[2], numero: m[3]?.replace(/\s+/g, "") ?? null, oggetto: m[4].trim() };
+  return { anno: anno && anno >= ANNO_MIN && anno <= annoMax() ? anno : null, abbreviazione: m[2], numero: m[3]?.replace(/\s+/g, "") ?? null, oggetto: m[4].trim() };
 }
 
 function tipoDaAbbreviazione(abbr: string): string | null {
@@ -281,11 +281,17 @@ export function intestazione(testo: string): Intestazione | null {
     migliore = { tipo, numero: numero ? numero.replace(/\s+/g, "").toUpperCase().replace(/^0+(?=\d)/, "") : null, data, posizione: m.index };
   }
   if (migliore && !migliore.data) {
-    // Data di emanazione: "del 18 novembre 2011" vicino all'intestazione o "Roma, 18 novembre 2011".
+    // Data di emanazione: "CIRCOLARE n. 3 del 16.10.2009" (subito dopo
+    // l'intestazione) oppure la data di firma "Roma, 18 novembre 2011". Mai un
+    // "del <data>" piu' avanti: di solito e' un atto citato nell'OGGETTO.
     const zona = testo.slice(0, 1200).replace(/\s+/g, " ");
-    const del = zona.slice(migliore.posizione, migliore.posizione + 220).match(new RegExp(`\\bdel\\s+(${DATA})`, "i"));
-    migliore.data = dataIso(del?.[1] ?? "") ?? dataRoma(testo);
+    const dopo = zona.slice(migliore.posizione, migliore.posizione + 90);
+    const subito = dopo.match(new RegExp(`^[^;:]{0,40}?\\b(?:del|in data)\\s+(${DATA})`, "i"));
+    migliore.data = dataIso(subito?.[1] ?? "") ?? dataRoma(testo);
   }
+  // "Circolare n. 14/2007": l'anno nel numero deve concordare con la data.
+  const annoNumero = migliore?.numero?.match(/\/((?:18|19|20)\d{2})$/)?.[1];
+  if (migliore?.data && annoNumero && migliore.data.slice(0, 4) !== annoNumero) migliore.data = null;
   return migliore;
 }
 
