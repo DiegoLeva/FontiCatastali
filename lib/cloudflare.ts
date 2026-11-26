@@ -113,8 +113,13 @@ export function ripristinoQuota(): { ora: string; secondi: number } {
   };
 }
 
+// Blocco d'emergenza: la quota gratuita del 26/11/2026 (UTC) e' gia' stata
+// consumata dai test; con il piano Workers Paid ogni chiamata in piu' verrebbe
+// addebitata. Fino all'azzeramento di mezzanotte UTC nessuna chiamata parte.
+const FINE_BLOCCO_EMERGENZA = Date.UTC(2026, 10, 27);
+
 function controllaQuota(path: string): void {
-  if (path.includes("/ai/run/") && quotaAiEsaurita()) {
+  if (path.includes("/ai/run/") && (quotaAiEsaurita() || Date.now() < FINE_BLOCCO_EMERGENZA)) {
     throw new CloudflareError("Workers AI: quota giornaliera esaurita (chiamate sospese per qualche minuto).", 429, CODICE_QUOTA);
   }
 }
