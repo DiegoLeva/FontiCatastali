@@ -151,6 +151,8 @@ extra: l'API route gira già in runtime Node.
 | `STUDIO_MAX_PER_IP`, `STUDIO_MAX_GIORNO`, `STUDIO_NEURONI_DOSSIER` | no | limiti dei dossier (default 4/10 min per IP, 4 nuovi al giorno, 2.500 neuroni l'uno) |
 | `AI_NEURONI_GIORNO`, `AI_NEURONI_RISERVA` | no | tetto giornaliero di neuroni (default 8.800, max 9.500) e riserva per Normie e cron (2.000) |
 | `AI_SYNC_REMOTA`, `VECTORIZE_OLTRE_QUOTA` | no | allineamento al consumo reale (default attivo) e guardiano Vectorize (default attivo) |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no | archivio dei PDF importati su R2 (vedi 4-ter); senza, l'archivio resta spento |
+| `R2_ACCOUNT_ID`, `R2_URL_PUBBLICO`, `R2_PREFISSO`, `R2_MAX_GB` | no | account (default `CF_ACCOUNT_ID`), base pubblica, cartella (`aggiornamenti`) e tetto di spazio (2 GB, max 8) |
 
 - Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
   servono le tabelle `aggiornamenti_*` e `studio_dossier`, create al primo uso.
@@ -178,6 +180,85 @@ extra: l'API route gira già in runtime Node.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare
   `/api/cron/aggiorna-normativa` con schedule `0 5 * * 1`; da lì il pulsante
   **Run** avvia un'esecuzione manuale. Esito su `/aggiornamenti`.
+
+---
+
+## 4-ter. Metadati, argomenti seguiti, archivio R2 e OCR locale (tutto gratuito)
+
+### Metadati del corpus
+
+Anni, tipologie (Circolare, Risoluzione, Decreto...), estremi ("Circolare n. 14
+del 9 marzo 2007") e doppioni sono normalizzati in modo deterministico
+(`lib/metadati/`, nessun modello AI) nella tabella `documenti_meta`, che
+sopravvive alle reimportazioni del corpus. Il cron del lunedì tratta da solo
+i documenti nuovi; per rieseguire tutto (idempotente):
+
+```bash
+npm run bonifica:metadati
+```
+
+```bash
+npm run bonifica:metadati -- --applica
+```
+
+oppure, in produzione, `GET /api/manutenzione/metadati` (prova a secco) e
+`?applica=1` con l'header `Authorization: Bearer <CRON_SECRET>`. Rapporto
+dell'esecuzione del 26/11/2026: `docs/bonifica-metadati-2026-11-26.md`.
+
+### Argomenti seguiti
+
+Nessuna configurazione: i pulsanti **Segui** in Ricerca e nello Studio
+salvano l'argomento nel browser (localStorage) e in un registro anonimo
+(`watchlist_argomenti`). Il cron confronta gli atti nuovi con gli argomenti e
+con i dossier in cache: badge «Novità sui tuoi argomenti» nell'header, badge
+«Nuova normativa disponibile» sui dossier, elenco su `/aggiornamenti#seguiti`.
+Il webhook (`AGGIORNAMENTI_WEBHOOK_URL`) riceve anche `argomenti` e `dossier`.
+
+### Archivio dei PDF su Cloudflare R2 (opzionale)
+
+Il cron copia su R2 ogni PDF importato (e le scansioni in coda OCR): se
+l'Agenzia sposta o cancella il file, il documento mostra la «copia
+d'archivio». Gratis entro le quote di R2 (10 GB e 1 milione di scritture al
+mese): l'app si ferma a `R2_MAX_GB` (2 GB di default, mai oltre 8, perché il
+bucket ospita anche i PDF del corpus) e a 20.000 scritture al mese.
+
+1. Cloudflare → **R2** → bucket esistente dei PDF (es. `fonticatastali-docs`),
+   oppure **Create bucket** (gratis).
+2. R2 → **Manage API tokens** → **Create API token** → permesso
+   **Object Read & Write** limitato a quel bucket. Copia *Access Key ID* e
+   *Secret Access Key* (non è il token di Workers AI).
+3. Vercel → Settings → Environment Variables (Production): `R2_ACCESS_KEY_ID`,
+   `R2_SECRET_ACCESS_KEY` (come **Sensitive**), `R2_BUCKET`, e `R2_URL_PUBBLICO`
+   = base pubblica del bucket (la stessa di `NEXT_PUBLIC_DOCS_BASE_URL` se il
+   bucket è quello dei PDF). Redeploy.
+
+Senza queste variabili l'archivio resta spento e nulla cambia.
+
+### OCR locale dei PDF scansionati
+
+I PDF senza testo selezionabile non finiscono più tra gli errori: restano in
+coda «da OCR» (filtro su `/aggiornamenti`). Nessun OCR a pagamento: quando
+vuoi, dal tuo PC:
+
+```bash
+brew install tesseract tesseract-lang poppler
+```
+
+(Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-ita poppler-utils`),
+poi, con `TURSO_DATABASE_URL` e un `TURSO_AUTH_TOKEN` che può scrivere in
+`.env.local`:
+
+```bash
+npm run ocr:locale -- --prova
+```
+
+```bash
+npm run ocr:locale
+```
+
+Lo script scarica i PDF (dalla copia su R2 se c'è), estrae il testo con
+tesseract (italiano), applica la stessa pertinenza e deduplica del cron e li
+importa nel corpus con titolo e metadati normalizzati. Zero neuroni.
 
 ---
 
