@@ -23,7 +23,8 @@ function normalizza(s: string): string {
 
 /** Termini caratteristici del dominio: uno solo basta a scaricare il PDF. */
 const FORTI: Array<[string, RegExp]> = [
-  ["catasto", /\bcatast/],
+  // (?!rof): "catastrofe", "rischi catastrofali" non sono catasto.
+  ["catasto", /\bcatast(?!rof)/],
   ["docfa", /\bdocfa\b/],
   ["pregeo", /\bpregeo\b/],
   ["voltura", /\bvoltur/],

@@ -99,10 +99,12 @@ export function parseRssGazzetta(xml: string): AttoGazzetta[] {
 /**
  * Filtro rigoroso: solo atti con termini catastali o di pubblicita'
  * immobiliare nel titolo o nell'oggetto (niente rumore: la Gazzetta pubblica
- * ogni giorno decine di atti estranei).
+ * ogni giorno decine di atti estranei). Esclusi i falsi amici: "rischi
+ * catastrofali" e le volture dei contratti di energia (le volture contano
+ * solo negli atti dell'Agenzia delle Entrate).
  */
 const PERTINENZA_GU =
-  /\bcatast|\bcensuar|\bvoltur|\bdocfa\b|\bpregeo\b|\brendit[ae]\s+catastal|conservatori[ae]\s+dei\s+registri\s+immobiliari|pubblicit[aà]\s+immobiliare|accatastament|\bmapp[ae]\s+catastal|tributi\s+speciali\s+catastali|fabbricati\s+rurali|osservatorio\s+del\s+mercato\s+immobiliare|unit[aà]\s+immobiliar[ei]\s+urban|\bestimi\b/i;
+  /\bcatast(?!rof)|\bcensuar|agenzia\s+delle\s+entrate\b[\s\S]*\bvoltur|\bdocfa\b|\bpregeo\b|\brendit[ae]\s+catastal|conservatori[ae]\s+dei\s+registri\s+immobiliari|pubblicit[aà]\s+immobiliare|accatastament|\bmapp[ae]\s+catastal|tributi\s+speciali\s+catastali|fabbricati\s+rurali|osservatorio\s+del\s+mercato\s+immobiliare|unit[aà]\s+immobiliar[ei]\s+urban|\bestim[oi]\b/i;
 export const pertinenteGazzetta = (a: Pick<AttoGazzetta, "titolo" | "oggetto">) => PERTINENZA_GU.test(`${a.titolo} ${a.oggetto}`);
 
 export const urlTestoGazzetta = (a: Pick<AttoGazzetta, "pubblicazione" | "codice">) =>

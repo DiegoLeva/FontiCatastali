@@ -88,6 +88,14 @@ async function main() {
   verifica(!/26G00229/.test(dpr.oggetto) && !/\s{2}/.test(dpr.oggetto), "oggetto pulito (senza codice finale e spazi doppi)");
   verifica(atti[1].emittente === "MINISTERO DELL'ECONOMIA E DELLE FINANZE" && atti[1].tipo === "Decreto", "emittente e tipo dal titolo");
   verifica(atti.filter(gu.pertinenteGazzetta).map((x) => x.codice).join() === "26A06200", "filtro rigoroso: solo l'atto catastale");
+  const catastrofali = { titolo: "MINISTERO DELLE IMPRESE E DEL MADE IN ITALY - DECRETO 30 gennaio 2026, n. 18", oggetto: "Regolamento sulle modalità di assicurazione dei rischi catastrofali per le imprese." };
+  const energia = { titolo: "AUTORITA' DI REGOLAZIONE PER ENERGIA RETI E AMBIENTE - DELIBERAZIONE 3 ottobre 2026", oggetto: "Disposizioni sulla voltura dei contratti di fornitura di energia elettrica." };
+  const volture = { titolo: "AGENZIA DELLE ENTRATE - PROVVEDIMENTO 2 ottobre 2026", oggetto: "Modalità di presentazione delle domande di voltura." };
+  verifica(!gu.pertinenteGazzetta(catastrofali) && !gu.pertinenteGazzetta(energia) && gu.pertinenteGazzetta(volture), "falsi amici esclusi: «rischi catastrofali», volture dei contratti di energia (tenute quelle dell'Agenzia)");
+  const pert = await import("../lib/aggiornamenti/pertinenza");
+  const metaCat = pert.valutaMetadati("Circolare n. 5", "Detrazione dei premi delle polizze contro i rischi catastrofali");
+  const testoCat = "Le polizze contro gli eventi catastrofali. ".repeat(12) + "La catastrofe naturale e i danni catastrofici.";
+  verifica(!metaCat.forti.includes("catasto") && !pert.valutaTesto(testoCat, metaCat).pertinente, "anche per l'Agenzia: «catastrofale» non conta come catasto");
   verifica(gu.urlTestoGazzetta(atti[2]) === "https://www.gazzettaufficiale.it/atto/serie_generale/caricaArticoloDefault/originario?atto.dataPubblicazioneGazzetta=2026-11-26&atto.codiceRedazionale=26A06200", "URL del testo dell'atto");
   const testo = gu.testoDaHtmlGazzetta(PAGINA_ATTO);
   verifica(/unità immobiliari urbane/.test(testo) && !/var a/.test(testo) && testo.split("\n").length >= 4, "testo HTML dell'atto: entità decodificate, script tolti, paragrafi conservati");
