@@ -75,6 +75,39 @@ async function scriviKv(db: Client, chiave: string, valore: string): Promise<voi
   });
 }
 
+/** Somma atomica: due esecuzioni non si sovrascrivono il conteggio. */
+async function sommaKv(db: Client, chiave: string, delta: number): Promise<void> {
+  const d = Math.round(delta * 100) / 100;
+  await db.execute({
+    sql: `INSERT INTO vectorize_indice (chiave, valore) VALUES (?, ?)
+          ON CONFLICT(chiave) DO UPDATE SET valore = CAST(ROUND(CAST(vectorize_indice.valore AS REAL) + ?, 2) AS TEXT)`,
+    args: [chiave, String(d), d],
+  });
+}
+
+/**
+ * Una sola indicizzazione alla volta (cron notturno, cron del lunedi',
+ * manutenzione a mano): turno con scadenza su Turso, preso in modo atomico.
+ * Se una funzione viene interrotta, il turno scade da solo.
+ */
+const CHIAVE_TURNO = "esecuzione_in_corso";
+
+async function prendiTurno(db: Client, durataMs: number): Promise<string | null> {
+  const adesso = Date.now();
+  const valore = `${adesso + durataMs}:${Math.random().toString(36).slice(2, 10)}`;
+  const rs = await db.execute({
+    sql: `INSERT INTO vectorize_indice (chiave, valore) VALUES (?, ?)
+          ON CONFLICT(chiave) DO UPDATE SET valore = excluded.valore
+          WHERE CAST(substr(vectorize_indice.valore, 1, instr(vectorize_indice.valore, ':') - 1) AS INTEGER) < ?`,
+    args: [CHIAVE_TURNO, valore, adesso],
+  });
+  return rs.rowsAffected > 0 ? valore : null;
+}
+
+async function lasciaTurno(db: Client, valore: string): Promise<void> {
+  await db.execute({ sql: `DELETE FROM vectorize_indice WHERE chiave = ? AND valore = ?`, args: [CHIAVE_TURNO, valore] }).catch(() => undefined);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Piano                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -142,6 +175,8 @@ export interface StatoRicostruzione {
   avviataIl: string | null;
   neuroniOggi: number;
   neuroniGiorno: number;
+  /** Un'esecuzione sta lavorando ora (turno non scaduto). */
+  inCorso: boolean;
 }
 
 /** Piano e avanzamento (nessuna chiamata AI). */
@@ -171,6 +206,7 @@ export async function statoRicostruzione(db: Client): Promise<StatoRicostruzione
     avviataIl: await leggiKv(db, "avviata_il"),
     neuroniOggi: Number((await leggiKv(db, `neuroni:${giornoUtc()}`)) ?? 0),
     neuroniGiorno: NEURONI_GIORNO_INDICE,
+    inCorso: Number((await leggiKv(db, CHIAVE_TURNO))?.split(":")[0] ?? 0) > Date.now(),
   };
 }
 
@@ -219,11 +255,19 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
     return fine(`l'indice ha ${info.dimensioni} dimensioni e il modello ${EMBEDDING_DIMS}: va ricreato (DEPLOY.md, «Ricostruzione di Vectorize»)`);
   }
 
+  let turno: string | null;
+  try {
+    turno = await prendiTurno(db, budgetMs + 90_000);
+  } catch (err) {
+    return fine(`errore: ${(err as Error).message.slice(0, 200)}`);
+  }
+  if (!turno) return fine("un'altra indicizzazione è in corso: riprende alla prossima");
+
   try {
     // Nuova generazione (indice ricreato o modello cambiato): si riparte da zero.
     const gen = generazioneCorrente();
     if ((await leggiKv(db, "generazione")) !== gen) {
-      await db.batch([`DELETE FROM passaggi`, `DELETE FROM vectorize_documenti`, `DELETE FROM vectorize_indice WHERE chiave NOT LIKE 'neuroni:%'`], "write");
+      await db.batch([`DELETE FROM passaggi`, `DELETE FROM vectorize_documenti`, `DELETE FROM vectorize_indice WHERE chiave NOT LIKE 'neuroni:%' AND chiave <> '${CHIAVE_TURNO}'`], "write");
       await scriviKv(db, "generazione", gen);
       await scriviKv(db, "avviata_il", new Date().toISOString());
     }
@@ -273,9 +317,12 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
 
     const giorno = giornoUtc();
     const spesiOggi = Number((await leggiKv(db, `neuroni:${giorno}`)) ?? 0);
+    const residuoGiorno = Math.max(0, NEURONI_GIORNO_INDICE - spesiOggi);
+    // Tetto chiesto per QUESTA esecuzione (?neuroni=N) piu' basso di quello del giorno.
+    const perEsecuzione = opz.maxNeuroni !== undefined && opz.maxNeuroni < residuoGiorno;
     const tetto: TettoLocale = {
-      nome: "indicizzazione di oggi",
-      limite: Math.max(0, Math.min(opz.maxNeuroni ?? Infinity, NEURONI_GIORNO_INDICE - spesiOggi)),
+      nome: perEsecuzione ? "questa indicizzazione" : "indicizzazione di oggi",
+      limite: Math.max(0, Math.min(opz.maxNeuroni ?? Infinity, residuoGiorno)),
       usati: 0,
     };
     const tettoVettori = Math.floor(TETTO_MEMORIZZATE / EMBEDDING_DIMS);
@@ -317,7 +364,9 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
         const caratteriInput = testi.reduce((s, t) => s + testoPerEmbedding(t, "documento", titolo).length, 0);
         const stima = neuroni(EMBEDDING_MODEL, stimaToken(caratteriInput) + scelti.length, 0) * MARGINE;
         if (tetto.usati + impegnati + stima > tetto.limite) {
-          arresto ??= `budget di indicizzazione di oggi esaurito (${Math.round(spesiOggi + tetto.usati)}/${NEURONI_GIORNO_INDICE} neuroni): riprende domani`;
+          arresto ??= perEsecuzione
+            ? `budget di questa esecuzione esaurito (${Math.round(tetto.usati * 100) / 100}/${opz.maxNeuroni} neuroni): riprende alla prossima`
+            : `budget di indicizzazione di oggi esaurito (${Math.round(spesiOggi + tetto.usati)}/${NEURONI_GIORNO_INDICE} neuroni): riprende domani`;
           coda.unshift(e);
           return;
         }
@@ -376,7 +425,7 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
     await conServizioAi("cron", () => Promise.all(Array.from({ length: PARALLELI }, () => lavora())), tetto);
 
     esito.neuroni = Math.round(tetto.usati * 100) / 100;
-    if (tetto.usati > 0) await scriviKv(db, `neuroni:${giorno}`, String(Math.round((spesiOggi + tetto.usati) * 100) / 100));
+    if (tetto.usati > 0) await sommaKv(db, `neuroni:${giorno}`, tetto.usati);
     const residui = elenco.filter(daRifare).length;
     esito.residui = residui;
     if (residui === 0) {
@@ -388,5 +437,7 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
   } catch (err) {
     invalidaRiepilogo();
     return fine(`errore: ${(err as Error).message.slice(0, 200)}`);
+  } finally {
+    await lasciaTurno(db, turno);
   }
 }

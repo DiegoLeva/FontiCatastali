@@ -151,11 +151,17 @@ async function main() {
 
   console.log("\n# Ricostruzione a lotti");
   const fermo = await ix.indicizzaDocumenti(db, { maxNeuroni: 0.00001 });
-  verifica(fermo.documenti === 0 && /budget/.test(fermo.arresto ?? "") && rete.embedding === 0, `budget minimo: si ferma prima di spendere (${fermo.arresto})`);
+  verifica(fermo.documenti === 0 && /budget di questa esecuzione/.test(fermo.arresto ?? "") && rete.embedding === 0, `tetto della singola esecuzione: si ferma prima di spendere, senza dire «domani» (${fermo.arresto})`);
   const senzaTempo = await ix.indicizzaDocumenti(db, { budgetMs: 0 });
   verifica(senzaTempo.documenti === 0 && /tempo/.test(senzaTempo.arresto ?? ""), "tempo esaurito: si ferma e riprende dopo");
   verifica(!(await vz.prenotaQueryVectorize()), "ricostruzione non finita: ricerca semantica ancora spenta");
+  await db.execute({ sql: `INSERT INTO vectorize_indice (chiave, valore) VALUES ('esecuzione_in_corso', ?)`, args: [`${Date.now() + 60_000}:altra`] });
+  const occupato = await ix.indicizzaDocumenti(db);
+  verifica(occupato.documenti === 0 && /in corso/.test(occupato.arresto ?? "") && rete.embedding === 0, `un'altra indicizzazione in corso: nessun lavoro doppio (${occupato.arresto})`);
+  await db.execute({ sql: `UPDATE vectorize_indice SET valore = ? WHERE chiave = 'esecuzione_in_corso'`, args: [`${Date.now() - 1}:interrotta`] });
   const tutto = await ix.indicizzaDocumenti(db);
+  const turnoRimasto = await db.execute(`SELECT COUNT(*) AS n FROM vectorize_indice WHERE chiave = 'esecuzione_in_corso'`);
+  verifica(Number(turnoRimasto.rows[0].n) === 0, "turno scaduto ripreso e lasciato a fine esecuzione");
   const vettoriTurso = Number((await db.execute(`SELECT COALESCE(SUM(vettori), 0) AS v FROM vectorize_documenti`)).rows[0].v);
   verifica(tutto.completata && tutto.residui === 0 && tutto.documenti === 4, `ricostruzione completa: 4 documenti (${tutto.documenti}, arresto: ${tutto.arresto ?? "nessuno"})`);
   verifica(indice.vettori.size === vettoriTurso && vettoriTurso <= 40, `vettori su Vectorize = passaggi su Turso, entro il tetto (${indice.vettori.size}/40)`);
@@ -174,6 +180,8 @@ async function main() {
   await db.execute({ sql: `UPDATE documenti SET testo_estratto = ? WHERE id = 1`, args: [paragrafo("voltura", 1)] });
   const cambiato = await ix.indicizzaDocumenti(db);
   verifica(cambiato.documenti === 1 && indice.vettori.has("1-0") && !indice.vettori.has("1-1"), "documento cambiato: reindicizzato, passaggi vecchi cancellati");
+  const contatore = Number((await db.execute({ sql: `SELECT valore FROM vectorize_indice WHERE chiave = ?`, args: [`neuroni:${new Date().toISOString().slice(0, 10)}`] })).rows[0]?.valore ?? 0);
+  verifica(Math.abs(contatore - (tutto.neuroni + cambiato.neuroni)) < 0.02, `neuroni dell'indicizzazione sommati tra le esecuzioni (${contatore} ≈ ${Math.round((tutto.neuroni + cambiato.neuroni) * 100) / 100})`);
   await db.execute(`INSERT INTO documenti_meta (doc_id, duplicato_di, revisione, aggiornato_il) VALUES (5, 2, 1, '2026-11-27') ON CONFLICT(doc_id) DO UPDATE SET duplicato_di = 2`);
   const { _azzeraCacheMetadati } = await import("../lib/metadati/bonifica");
   _azzeraCacheMetadati();
