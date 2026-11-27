@@ -21,6 +21,7 @@ import { Timeline } from "./Timeline";
 import { IndiceFonti } from "./IndiceFonti";
 import { Progresso, type StatoFase } from "./Progresso";
 import { dossierMarkdown } from "./esporta";
+import { SeguiArgomento } from "@/components/watchlist/SeguiArgomento";
 
 const SUGGERITI = [
   "Volture",
@@ -469,6 +470,7 @@ export function StudioApp() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <SeguiArgomento argomento={argomento} compatto />
           <AzioneBtn onClick={copiaMd} disabled={!dossier}>{copiato ? "Copiato ✓" : "Copia Markdown"}</AzioneBtn>
           <AzioneBtn onClick={scaricaMd} disabled={!dossier}>Scarica .md</AzioneBtn>
           <AzioneBtn onClick={() => window.print()} disabled={!dossier}>Stampa / PDF</AzioneBtn>

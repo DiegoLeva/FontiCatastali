@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { BetaBadge } from "./BetaBadge";
+import { BadgeNovita } from "./watchlist/BadgeNovita";
 
 export type Sezione = "ricerca" | "studio" | "aggiornamenti" | "documento";
 
@@ -69,6 +70,7 @@ export function SiteHeader({
           <span className="sm:hidden">Studio</span>
           <BetaBadge />
         </NavLink>
+        <BadgeNovita />
         <span className="ml-1">
           <ThemeToggle />
         </span>

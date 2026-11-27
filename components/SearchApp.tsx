@@ -18,6 +18,7 @@ import { BrowseTree } from "./BrowseTree";
 import { BrowseSwitch, type BrowseMode } from "./BrowseSwitch";
 import { TopicMap } from "./TopicMap";
 import { SearchIcon } from "./icons";
+import { SeguiArgomento } from "./watchlist/SeguiArgomento";
 
 const MIN_CHARS = 2;
 
@@ -223,6 +224,12 @@ export function SearchApp() {
               onToggle={toggleDecade}
               onReset={() => setActiveDecades([])}
             />
+            {!exact && data && data.query.trim().length >= 3 && (
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                <span className="text-[12px] text-mute">Avvisami dei nuovi atti su «{data.query.trim()}»</span>
+                <SeguiArgomento argomento={data.query.trim()} compatto />
+              </div>
+            )}
             <ResultsTree data={view} />
             {!exact && data && data.query.trim().length >= 3 && (
               <Link
