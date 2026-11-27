@@ -1,18 +1,24 @@
 import type { Client } from "@libsql/client";
 import { getDb } from "@/lib/db";
-import { infoIndice } from "@/lib/cloudflare";
+import { EMBEDDING_DIMS, EMBEDDING_MODEL, infoIndice } from "@/lib/cloudflare";
+import { riepilogoIndice } from "@/lib/ai/passaggi";
 
 /**
  * Guardiano delle quote Vectorize (obiettivo: 0 € extra).
  *
- * Workers Paid include ogni mese 50 milioni di dimensioni INTERROGATE e 10
- * milioni di dimensioni MEMORIZZATE. Per Cloudflare le interrogate valgono
- * (query del mese + vettori memorizzati) × dimensioni: con un indice grande
- * anche UNA sola query nel mese fa superare la quota. Quindi:
+ * Workers Paid include ogni mese 10 milioni di dimensioni MEMORIZZATE e 50
+ * milioni di dimensioni INTERROGATE, e per Cloudflare le interrogate valgono
+ * (query del mese + vettori memorizzati) × dimensioni. L'app resta molto sotto:
  *
- *   - una query parte solo se (vettori + query del mese + 1) × dimensioni
- *     resta sotto il 90% dei 50M (contatore mensile atomico su Turso);
- *   - un upsert parte solo se le memorizzate restano sotto il 90% dei 10M;
+ *   - memorizzate: tetto rigido di 8,5 milioni (VECTORIZE_MAX_MEMORIZZATE),
+ *     1,5 milioni di margine sotto i 10 inclusi; un upsert che lo supererebbe
+ *     non parte;
+ *   - interrogate: contatore mensile su Turso con tetto rigido di 20 milioni
+ *     (VECTORIZE_MAX_INTERROGATE), calcolato nel modo piu' prudente
+ *     ((query + vettori) × dimensioni, come se ogni giorno avesse query); al
+ *     tetto Normie, lo Studio e la ricerca ibrida tornano alla ricerca testuale;
+ *   - niente query se l'indice non ha le dimensioni del modello di embedding
+ *     o se la ricostruzione non e' finita (risultati parziali);
  *   - se le informazioni sull'indice non sono verificabili non si interroga.
  *
  * VECTORIZE_OLTRE_QUOTA=1 disattiva il guardiano (scelta consapevole di
@@ -21,17 +27,26 @@ import { infoIndice } from "@/lib/cloudflare";
 
 export const INCLUSE_INTERROGATE = 50_000_000;
 export const INCLUSE_MEMORIZZATE = 10_000_000;
-const QUOTA_UTILE = 0.9;
-const CACHE_INFO_MS = 60 * 60_000;
+
+const intero = (v: string | undefined, def: number, min: number, max: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== undefined && v !== "" ? Math.min(max, Math.max(min, Math.round(n))) : def;
+};
+/** Tetto rigido delle dimensioni memorizzate (mai oltre 9 milioni). */
+export const TETTO_MEMORIZZATE = intero(process.env.VECTORIZE_MAX_MEMORIZZATE, 8_500_000, 0, 9_000_000);
+/** Tetto rigido mensile delle dimensioni interrogate (mai oltre 45 milioni). */
+export const TETTO_INTERROGATE = intero(process.env.VECTORIZE_MAX_INTERROGATE, 20_000_000, 0, 45_000_000);
+const CACHE_INFO_MS = 30 * 60_000;
 
 const meseUtc = (d = new Date()) => d.toISOString().slice(0, 7);
 const oltreQuotaConsentito = () => process.env.VECTORIZE_OLTRE_QUOTA === "1";
 const configurato = () => !!(process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN && process.env.CF_VECTORIZE_INDEX);
+export const generazioneCorrente = () => `${EMBEDDING_MODEL}@${EMBEDDING_DIMS}`;
 
 let info: { il: number; dimensioni: number; vettori: number } | null = null;
 let erroreInfo = "";
 
-async function leggiInfo(forza = false): Promise<{ dimensioni: number; vettori: number } | null> {
+export async function leggiInfo(forza = false): Promise<{ dimensioni: number; vettori: number } | null> {
   if (!forza && info && Date.now() - info.il < CACHE_INFO_MS) return info;
   try {
     const i = await infoIndice();
@@ -41,9 +56,12 @@ async function leggiInfo(forza = false): Promise<{ dimensioni: number; vettori: 
     return info;
   } catch (err) {
     erroreInfo = (err as Error).message.slice(0, 160);
+    info = null;
     return null;
   }
 }
+
+export const ultimoErroreInfo = () => erroreInfo;
 
 let pronto: Promise<boolean> | null = null;
 async function assicura(db: Client): Promise<boolean> {
@@ -65,21 +83,38 @@ export interface StatoVectorize {
   motivo: string;
   vettori: number;
   dimensioni: number;
+  dimensioniModello: number;
+  modello: string;
   memorizzate: number;
+  tettoMemorizzate: number;
   interrogateMese: number;
+  tettoInterrogate: number;
   queryMese: number;
   maxQueryMese: number;
   bloccateMese: number;
   oltreQuotaConsentito: boolean;
+  /** Ricostruzione dell'indice: documenti e vettori gia' caricati. */
+  indice: { pronto: boolean; documenti: number; vettori: number; completataIl: string | null };
 }
 
-function calcola(i: { dimensioni: number; vettori: number }, queryMese: number) {
-  const maxQueryMese = Math.max(0, Math.floor((QUOTA_UTILE * INCLUSE_INTERROGATE) / i.dimensioni) - i.vettori);
+/** Vettori da usare nei conti: il massimo tra Vectorize (asincrono) e Turso. */
+const vettoriDi = (i: { vettori: number }, turso: number) => Math.max(i.vettori, turso);
+
+function calcola(dimensioni: number, vettori: number, queryMese: number) {
+  const maxQueryMese = Math.max(0, Math.floor(TETTO_INTERROGATE / Math.max(1, dimensioni)) - vettori);
   return {
-    memorizzate: i.vettori * i.dimensioni,
-    interrogateMese: queryMese > 0 ? (queryMese + i.vettori) * i.dimensioni : 0,
+    memorizzate: vettori * dimensioni,
+    interrogateMese: queryMese > 0 ? (queryMese + vettori) * dimensioni : 0,
     maxQueryMese,
   };
+}
+
+async function riepilogoSicuro() {
+  try {
+    return await riepilogoIndice(getDb());
+  } catch {
+    return { generazione: null, completataIl: null, documenti: 0, vettori: 0 };
+  }
 }
 
 export async function statoVectorize(): Promise<StatoVectorize> {
@@ -89,15 +124,22 @@ export async function statoVectorize(): Promise<StatoVectorize> {
     motivo: "",
     vettori: 0,
     dimensioni: 0,
+    dimensioniModello: EMBEDDING_DIMS,
+    modello: EMBEDDING_MODEL,
     memorizzate: 0,
+    tettoMemorizzate: TETTO_MEMORIZZATE,
     interrogateMese: 0,
+    tettoInterrogate: TETTO_INTERROGATE,
     queryMese: 0,
     maxQueryMese: 0,
     bloccateMese: 0,
     oltreQuotaConsentito: oltreQuotaConsentito(),
+    indice: { pronto: false, documenti: 0, vettori: 0, completataIl: null },
   };
   if (!base.configurato) return { ...base, motivo: "Vectorize non configurato." };
-  const i = await leggiInfo();
+  const [i, r] = await Promise.all([leggiInfo(), riepilogoSicuro()]);
+  const indicePronto = r.generazione === generazioneCorrente() && !!r.completataIl;
+  base.indice = { pronto: indicePronto, documenti: r.documenti, vettori: r.vettori, completataIl: r.completataIl };
   let queryMese = 0;
   let bloccateMese = 0;
   try {
@@ -111,25 +153,42 @@ export async function statoVectorize(): Promise<StatoVectorize> {
     /* contatore non leggibile */
   }
   if (!i) return { ...base, queryMese, bloccateMese, motivo: `Informazioni sull'indice non disponibili (${erroreInfo || "errore"}): ricerca semantica sospesa per prudenza.` };
-  const c = calcola(i, queryMese);
-  const stato = { ...base, dimensioni: i.dimensioni, vettori: i.vettori, ...c, queryMese, bloccateMese };
-  if (stato.oltreQuotaConsentito) return { ...stato, consentito: true, motivo: "Guardiano disattivato (VECTORIZE_OLTRE_QUOTA=1)." };
-  if (c.maxQueryMese <= queryMese) {
+  const vettori = vettoriDi(i, r.vettori);
+  const c = calcola(i.dimensioni, vettori, queryMese);
+  const stato = { ...base, dimensioni: i.dimensioni, vettori, ...c, queryMese, bloccateMese };
+  if (i.dimensioni !== EMBEDDING_DIMS) {
     return {
       ...stato,
-      motivo: `L'indice ha ${i.vettori.toLocaleString("it-IT")} vettori × ${i.dimensioni} dimensioni: anche una sola query nel mese porterebbe le dimensioni interrogate oltre i ${INCLUSE_INTERROGATE / 1e6} milioni inclusi. Ricerca semantica sospesa (si usa la ricerca testuale).`,
+      motivo: `L'indice ha vettori da ${i.dimensioni} dimensioni, il modello di embedding ne produce ${EMBEDDING_DIMS}: serve la ricostruzione (DEPLOY.md, «Ricostruzione di Vectorize»). Si usa la ricerca testuale.`,
     };
   }
-  return { ...stato, consentito: true, motivo: `Entro le quote incluse (${queryMese}/${c.maxQueryMese} query questo mese).` };
+  if (stato.oltreQuotaConsentito) return { ...stato, consentito: true, motivo: "Guardiano disattivato (VECTORIZE_OLTRE_QUOTA=1)." };
+  if (c.memorizzate > TETTO_MEMORIZZATE) {
+    return { ...stato, motivo: `L'indice ha ${(c.memorizzate / 1e6).toFixed(1)} milioni di dimensioni memorizzate, oltre il tetto di ${TETTO_MEMORIZZATE / 1e6} milioni: ricerca semantica sospesa.` };
+  }
+  if (!indicePronto) {
+    return {
+      ...stato,
+      motivo: `Ricostruzione dell'indice in corso (${r.documenti.toLocaleString("it-IT")} documenti, ${r.vettori.toLocaleString("it-IT")} passaggi): fino al termine si usa la ricerca testuale.`,
+    };
+  }
+  if (c.maxQueryMese <= queryMese) {
+    return { ...stato, motivo: `Tetto mensile di ${TETTO_INTERROGATE / 1e6} milioni di dimensioni interrogate raggiunto: fino al primo del mese si usa la ricerca testuale.` };
+  }
+  return { ...stato, consentito: true, motivo: `Attiva entro le quote (${queryMese.toLocaleString("it-IT")}/${c.maxQueryMese.toLocaleString("it-IT")} query questo mese).` };
 }
 
 /** Riserva una query Vectorize per il mese in corso; false = non interrogare. */
 export async function prenotaQueryVectorize(): Promise<boolean> {
   if (!configurato()) return false;
-  if (oltreQuotaConsentito()) return true;
   const i = await leggiInfo();
-  if (!i) return false;
-  const { maxQueryMese } = calcola(i, 0);
+  if (!i || i.dimensioni !== EMBEDDING_DIMS) return false;
+  if (oltreQuotaConsentito()) return true;
+  const r = await riepilogoSicuro();
+  if (r.generazione !== generazioneCorrente() || !r.completataIl) return false;
+  const vettori = vettoriDi(i, r.vettori);
+  if (vettori * i.dimensioni > TETTO_MEMORIZZATE) return false;
+  const { maxQueryMese } = calcola(i.dimensioni, vettori, 0);
   let db: Client;
   try {
     db = getDb();
@@ -157,17 +216,21 @@ export async function prenotaQueryVectorize(): Promise<boolean> {
   }
 }
 
-/** Si possono aggiungere `n` vettori restando sotto la quota di memorizzazione? */
-export async function spazioPerNuoviVettori(n: number): Promise<{ ok: boolean; motivo: string }> {
+/**
+ * Si possono aggiungere `n` vettori restando sotto il tetto delle dimensioni
+ * memorizzate? `vettoriNoti` = vettori gia' caricati secondo Turso.
+ */
+export async function spazioPerNuoviVettori(n: number, vettoriNoti = 0): Promise<{ ok: boolean; motivo: string }> {
   if (!configurato()) return { ok: false, motivo: "Vectorize non configurato." };
-  if (oltreQuotaConsentito()) return { ok: true, motivo: "" };
   const i = await leggiInfo(true);
   if (!i) return { ok: false, motivo: `indice non verificabile (${erroreInfo || "errore"})` };
-  const dopo = (i.vettori + n) * i.dimensioni;
-  if (dopo > QUOTA_UTILE * INCLUSE_MEMORIZZATE) {
+  if (i.dimensioni !== EMBEDDING_DIMS) return { ok: false, motivo: `l'indice ha ${i.dimensioni} dimensioni, il modello ${EMBEDDING_DIMS}: serve la ricostruzione` };
+  if (oltreQuotaConsentito()) return { ok: true, motivo: "" };
+  const dopo = (vettoriDi(i, vettoriNoti) + n) * i.dimensioni;
+  if (dopo > TETTO_MEMORIZZATE) {
     return {
       ok: false,
-      motivo: `l'indice ha già ${(i.vettori * i.dimensioni / 1e6).toFixed(1)} milioni di dimensioni memorizzate (incluse: ${INCLUSE_MEMORIZZATE / 1e6} milioni)`,
+      motivo: `con altri ${n} passaggi l'indice supererebbe il tetto di ${TETTO_MEMORIZZATE / 1e6} milioni di dimensioni memorizzate (incluse: ${INCLUSE_MEMORIZZATE / 1e6} milioni)`,
     };
   }
   return { ok: true, motivo: "" };

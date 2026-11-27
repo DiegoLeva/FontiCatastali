@@ -48,9 +48,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return ok({ matches: [] });
   }
   const body = init?.body ? JSON.parse(String(init.body)) : {};
-  if (url.includes("bge-m3")) {
+  if (url.includes("bge-m3") || url.includes("embeddinggemma")) {
     rete.embedding++;
-    return ok({ data: (body.text as string[]).map(() => [0.1, 0.2]) });
+    return ok({ data: ((body.input ?? body.text) as string[]).map((_, index) => ({ index, embedding: Array.from({ length: 256 }, () => 0.1) })) });
   }
   if (url.includes("reranker")) return ok({ response: (body.contexts as unknown[]).map((_, i) => ({ id: i, score: 1 - i / 100 })) });
   rete.ai++;
@@ -165,14 +165,22 @@ async function main() {
   indice = { dimensions: 1024, vectorCount: 56_011 };
   vz._azzeraPerTest();
   const sv = await vz.statoVectorize();
-  verifica(!sv.consentito && sv.memorizzate === 56_011 * 1024, `indice reale (56.011 × 1024): ricerca semantica sospesa`);
+  verifica(!sv.consentito && sv.memorizzate === 56_011 * 1024 && /ricostruzione/.test(sv.motivo), `vecchio indice (56.011 × 1024, modello a 256): ricerca semantica sospesa`);
   verifica(!(await vz.prenotaQueryVectorize()) && rete.vectorizeQuery === 0, "nessuna query inviata");
-  verifica(!(await vz.spazioPerNuoviVettori(10)).ok, "nessun nuovo vettore oltre i 10 M memorizzati inclusi");
-  indice = { dimensions: 1024, vectorCount: 1000 };
+  verifica(!(await vz.spazioPerNuoviVettori(10)).ok, "nessun nuovo vettore in un indice da ricreare");
+  indice = { dimensions: 256, vectorCount: 1000 };
   vz._azzeraPerTest();
-  verifica(await vz.prenotaQueryVectorize(), "indice piccolo: query consentita");
+  verifica(!(await vz.prenotaQueryVectorize()), "indice nuovo ma ricostruzione non finita: niente query");
+  const { assicuraSchemaIndice, _azzeraSchemaPerTest } = await import("../lib/ai/passaggi");
+  await assicuraSchemaIndice(db);
+  await db.batch([
+    { sql: `INSERT OR REPLACE INTO vectorize_indice (chiave, valore) VALUES ('generazione', ?)`, args: [vz.generazioneCorrente()] },
+    `INSERT OR REPLACE INTO vectorize_indice (chiave, valore) VALUES ('completata_il', '2026-11-27T06:00:00Z')`,
+  ], "write");
+  _azzeraSchemaPerTest();
+  verifica(await vz.prenotaQueryVectorize(), "indice compatto e completo: query consentita");
   const sv2 = await vz.statoVectorize();
-  verifica(sv2.queryMese === 1 && sv2.maxQueryMese === Math.floor((0.9 * 50_000_000) / 1024) - 1000, `contatore mensile delle query (${sv2.queryMese}/${sv2.maxQueryMese})`);
+  verifica(sv2.consentito && sv2.queryMese === 1 && sv2.maxQueryMese === Math.floor(20_000_000 / 256) - 1000, `contatore mensile delle query con tetto 20 M (${sv2.queryMese}/${sv2.maxQueryMese})`);
 
   console.log("\n# Normie senza Vectorize (ricerca testuale)");
   indice = { dimensions: 1024, vectorCount: 56_011 };

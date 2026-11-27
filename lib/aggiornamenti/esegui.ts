@@ -9,9 +9,8 @@ import { chat } from "@/lib/cloudflare";
 import { FONTI, parseElenco, scaricaElenco, type FonteConfig, type VoceFonte } from "./fonti";
 import { valutaMetadati, valutaTesto } from "./pertinenza";
 import { ErrorePdf, estraiProtocollo, estraiTesto, scaricaPdf } from "./pdf";
-import { indicizzaSemantico } from "./indicizza";
+import { indicizzaImportati } from "./indicizza";
 import {
-  aggiornaSemantico,
   apriEsecuzione,
   assicuraSchema,
   cercaDuplicato,
@@ -453,13 +452,6 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
           docId, sha256: estratto.sha256, titolo, cartella: fonte.cartella, testo: estratto.testo,
         });
         rapporto.voci.push({ ...base, esito: "importato", motivo: valutazione.motivo, titolo, docId });
-
-        const sem = await indicizzaSemantico({
-          docId, titolo, cartella: fonte.cartella, nomeFile: v.url, anno, testo: estratto.testo,
-        });
-        await aggiornaSemantico(db, v.url, sem);
-        if (sem === "ok") rapporto.indicizzati++;
-        else rapporto.dettagliErrori.push(`indicizzazione Normie di "${titolo}": ${sem}`);
       } catch (err) {
         rapporto.errori++;
         const motivo = `inserimento nel corpus non riuscito: ${(err as Error).message}`;
@@ -471,26 +463,17 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
       }
     }
 
-    // 6) Indicizzazione semantica arretrata (permessi del token corretti nel frattempo).
+    // 6) Indicizzazione semantica: prima gli atti appena importati, poi gli
+    //    arretrati (budget di neuroni e tetto di dimensioni in lib/ai/indice.ts).
     if (!prova && Date.now() - t0 < budget) {
       try {
-        const arretrati = await db.execute(
-          `SELECT url, doc_id, titolo, cartella, anno, testo FROM aggiornamenti_voci
-           WHERE stato = 'importato' AND doc_id IS NOT NULL AND testo IS NOT NULL
-             AND (semantico IS NULL OR semantico <> 'ok')
-           ORDER BY aggiornato_il LIMIT 3`
-        );
-        for (const r of arretrati.rows) {
-          if (Date.now() - t0 > budget) break;
-          const sem = await indicizzaSemantico({
-            docId: Number(r.doc_id), titolo: String(r.titolo ?? ""), cartella: String(r.cartella ?? ""),
-            nomeFile: String(r.url), anno: Number(r.anno ?? 0), testo: String(r.testo ?? ""),
-          });
-          await aggiornaSemantico(db, String(r.url), sem);
-          if (sem === "ok") rapporto.indicizzati++;
+        const ri = await indicizzaImportati(db, rapporto.idImportati, Math.max(10_000, budget - (Date.now() - t0) - 20_000));
+        rapporto.indicizzati = ri.documenti;
+        if (ri.arresto && !/tempo dell'esecuzione/.test(ri.arresto) && !/non configurato/.test(ri.arresto)) {
+          rapporto.dettagliErrori.push(`indicizzazione semantica: ${ri.arresto}`);
         }
       } catch (err) {
-        rapporto.dettagliErrori.push(`indicizzazione arretrata: ${(err as Error).message}`);
+        rapporto.dettagliErrori.push(`indicizzazione semantica: ${(err as Error).message}`);
       }
     }
 

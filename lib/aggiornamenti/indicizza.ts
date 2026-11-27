@@ -1,18 +1,17 @@
-import { CloudflareError, d1Query, embedMany, vectorUpsert } from "@/lib/cloudflare";
-import { spazioPerNuoviVettori } from "@/lib/ai/vectorize";
+import type { Client } from "@libsql/client";
+import { indicizzaDocumenti, type EsitoIndice } from "@/lib/ai/indice";
 
 /**
- * Indicizzazione semantica (Normie: Vectorize + D1) degli atti importati.
+ * Indicizzazione semantica degli atti importati dal cron.
  *
  * E' "best effort": il corpus su Turso (ricerca, mappa, Studio) e' gia'
- * aggiornato quando si arriva qui. Se il token Cloudflare non ha i permessi
- * di scrittura (Vectorize Edit, D1 Edit) l'errore viene registrato sulla voce
- * e il passaggio ritentato alle esecuzioni successive: basta aggiornare il
- * token e il lunedi' dopo gli atti arretrati vengono indicizzati da soli.
+ * aggiornato quando si arriva qui. Il lavoro vero lo fa lib/ai/indice.ts
+ * (passaggi con offset su Turso, EmbeddingGemma-2, tetti di neuroni e di
+ * dimensioni): se il tempo o il budget finiscono, gli atti restano in coda e
+ * li riprende il cron giornaliero /api/cron/indicizza.
  *
- * Il chunking e' la stessa logica di scripts/ingest_normie.py (unita'
- * normative intere: commi, lettere, elenchi; overlap a unita' intere), cosi'
- * gli atti nuovi si comportano come quelli caricati dalla pipeline.
+ * `chunkTesto` resta per compatibilita' (stessa logica di
+ * scripts/ingest_normie.py, unita' normative intere con overlap).
  */
 
 const CHUNK_CHARS = 1400;
@@ -105,66 +104,32 @@ export function chunkTesto(testo: string): string[] {
     .filter(Boolean);
 }
 
-export interface DocDaIndicizzare {
-  docId: number;
-  titolo: string;
-  cartella: string;
-  nomeFile: string;
-  anno: number;
-  testo: string;
-}
-
-/** Restituisce "ok" oppure un messaggio di errore leggibile (mai un'eccezione). */
-export async function indicizzaSemantico(d: DocDaIndicizzare): Promise<string> {
-  if (!process.env.CF_ACCOUNT_ID || !process.env.CF_API_TOKEN || !process.env.CF_VECTORIZE_INDEX || !process.env.CF_D1_DATABASE_ID) {
-    return "errore: credenziali Cloudflare non configurate";
+/**
+ * Indicizza prima gli atti appena importati, poi (col tempo che resta) i
+ * documenti ancora mancanti dall'indice. Aggiorna lo stato "semantico" delle
+ * voci del registro.
+ */
+export async function indicizzaImportati(db: Client, idImportati: number[], budgetMs: number): Promise<EsitoIndice> {
+  const t0 = Date.now();
+  let esito = await indicizzaDocumenti(db, { soloIds: idImportati.length ? idImportati : undefined, budgetMs });
+  if (idImportati.length && !esito.arresto && Date.now() - t0 < budgetMs - 5_000) {
+    const resto = await indicizzaDocumenti(db, { budgetMs: budgetMs - (Date.now() - t0) });
+    esito = { ...resto, documenti: esito.documenti + resto.documenti, vettori: esito.vettori + resto.vettori, neuroni: esito.neuroni + resto.neuroni };
   }
-  const pezzi = chunkTesto(d.testo);
-  if (!pezzi.length) return "errore: testo vuoto";
-  // Quote Vectorize: nuovi vettori solo se le dimensioni memorizzate restano
-  // sotto quelle incluse nel piano (altrimenti si rimanda, senza costi).
-  const spazio = await spazioPerNuoviVettori(pezzi.length);
-  if (!spazio.ok) return `rimandata: ${spazio.motivo}`;
   try {
-    // 1) testo su D1 per primo: e' la fonte autoritativa letta da Normie.
-    for (let i = 0; i < pezzi.length; i += D1_BATCH) {
-      const lotto = pezzi.slice(i, i + D1_BATCH);
-      const params: unknown[] = [];
-      lotto.forEach((testo, j) => {
-        const idx = i + j;
-        params.push(`${d.docId}-${idx}`, d.docId, d.titolo, d.cartella, d.nomeFile, d.anno, idx, testo);
+    await db.execute(
+      `UPDATE aggiornamenti_voci SET semantico = 'ok'
+       WHERE stato = 'importato' AND doc_id IN (SELECT doc_id FROM vectorize_documenti) AND (semantico IS NULL OR semantico <> 'ok')`
+    );
+    if (esito.arresto) {
+      await db.execute({
+        sql: `UPDATE aggiornamenti_voci SET semantico = ?
+              WHERE stato = 'importato' AND doc_id IS NOT NULL AND doc_id NOT IN (SELECT doc_id FROM vectorize_documenti)`,
+        args: [`rimandata: ${esito.arresto}`.slice(0, 300)],
       });
-      await d1Query(
-        `INSERT OR REPLACE INTO chunks (id, doc_id, titolo, cartella, nome_file, anno, chunk_index, testo)
-         VALUES ${lotto.map(() => "(?,?,?,?,?,?,?,?)").join(",")}`,
-        params
-      );
     }
-    // 2) embedding + upsert su Vectorize (metadati leggeri, testo in D1).
-    for (let i = 0; i < pezzi.length; i += EMBED_BATCH) {
-      const lotto = pezzi.slice(i, i + EMBED_BATCH);
-      const vettori = await embedMany(lotto);
-      await vectorUpsert(
-        vettori.map((values, j) => ({
-          id: `${d.docId}-${i + j}`,
-          values,
-          metadata: {
-            docId: d.docId,
-            titolo: d.titolo,
-            cartella: d.cartella,
-            nomeFile: d.nomeFile,
-            anno: d.anno,
-            chunkIndex: i + j,
-          },
-        }))
-      );
-    }
-    return "ok";
-  } catch (err) {
-    const msg = (err as Error).message || "errore sconosciuto";
-    if (err instanceof CloudflareError && (err.status === 401 || err.status === 403)) {
-      return "errore: il token Cloudflare non ha i permessi di scrittura su D1/Vectorize";
-    }
-    return `errore: ${msg.slice(0, 200)}`;
+  } catch {
+    /* registro del cron non ancora creato */
   }
+  return esito;
 }

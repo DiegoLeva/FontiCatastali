@@ -14,14 +14,15 @@
     "typecheck": "tsc --noEmit",
     "test:aggiornamenti": "tsx scripts/test-aggiornamenti.ts",
     "test:studio": "tsx scripts/test-studio.ts",
-    "test": "npm run test:aggiornamenti && npm run test:studio && npm run test:budget && npm run test:metadati && npm run test:watchlist && npm run test:archivio && npm run stima:neuroni",
+    "test": "npm run test:aggiornamenti && npm run test:studio && npm run test:budget && npm run test:metadati && npm run test:watchlist && npm run test:archivio && npm run test:vectorize && npm run stima:neuroni",
     "test:budget": "tsx scripts/test-budget.ts",
     "stima:neuroni": "tsx scripts/stima-neuroni.ts",
     "test:metadati": "tsx scripts/test-metadati.ts",
     "bonifica:metadati": "tsx scripts/bonifica-metadati.ts",
     "ocr:locale": "tsx scripts/ocr-locale.ts",
     "test:watchlist": "tsx scripts/test-watchlist.ts",
-    "test:archivio": "tsx scripts/test-archivio.ts"
+    "test:archivio": "tsx scripts/test-archivio.ts",
+    "test:vectorize": "tsx scripts/test-vectorize.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

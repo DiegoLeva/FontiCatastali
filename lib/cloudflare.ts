@@ -1,9 +1,10 @@
 /**
  * Ponte REST verso l'ecosistema Cloudflare, usato dalle API route su Vercel.
  *
- * Espone 4 primitive, tutte via l'API REST di Cloudflare (nessuna dipendenza da
- * un Worker deployato): embeddings + LLM (Workers AI), ricerca vettoriale
- * (Vectorize v2) e query SQL (D1). Ogni funzione e' isolata e testabile.
+ * Espone 3 primitive, tutte via l'API REST di Cloudflare (nessuna dipendenza da
+ * un Worker deployato): embeddings + LLM (Workers AI) e ricerca vettoriale
+ * (Vectorize v2). Il testo dei passaggi indicizzati sta su Turso (tabella
+ * `passaggi`, offset nel testo integrale): nessuna copia su D1.
  *
  * COSTI: ogni chiamata a Workers AI passa dal budget giornaliero
  * (lib/ai/budget.ts): prenota il costo massimo PRIMA di partire e si salda sui
@@ -11,11 +12,11 @@
  *
  * Env richieste (vedi .env.example):
  *   CF_ACCOUNT_ID       ID account Cloudflare
- *   CF_API_TOKEN        token con permessi: Workers AI (Run), Vectorize, D1 (Read)
+ *   CF_API_TOKEN        token con permessi: Workers AI (Read), Vectorize (Write)
  *                       (+ Account Analytics Read: contatore allineato al consumo reale)
  *   CF_VECTORIZE_INDEX  nome dell'indice Vectorize
- *   CF_D1_DATABASE_ID   UUID del database D1
- *   CF_EMBEDDING_MODEL  (opz.) default @cf/baai/bge-m3  (1024 dim, multilingue)
+ *   CF_EMBEDDING_MODEL  (opz.) default @cf/google/embeddinggemma-2 (multilingue)
+ *   CF_EMBEDDING_DIMS   (opz.) default 256 (Matryoshka: 128, 256, 512 o 768)
  *   CF_LLM_MODEL        (opz.) default @cf/google/gemma-4-26b-a4b-it
  */
 
@@ -26,8 +27,22 @@ const API_BASE = "https://api.cloudflare.com/client/v4";
 // senza abortire la fetch prima che il modello finisca.
 const REQUEST_TIMEOUT_MS = 55_000;
 
+/**
+ * Embedding: EmbeddingGemma-2 (multilingue, 154 neuroni per milione di token,
+ * 7 volte meno di bge-m3) troncato a 256 dimensioni (Matryoshka). Con 256
+ * dimensioni l'intero corpus sta in meno di 8,5 milioni di dimensioni
+ * memorizzate: dentro i 10 milioni inclusi in Workers Paid.
+ */
 export const EMBEDDING_MODEL =
-  process.env.CF_EMBEDDING_MODEL || "@cf/baai/bge-m3";
+  process.env.CF_EMBEDDING_MODEL || "@cf/google/embeddinggemma-2";
+const DIMENSIONI_GEMMA = [128, 256, 512, 768];
+const usaGemma = () => /embeddinggemma/i.test(EMBEDDING_MODEL);
+export const EMBEDDING_DIMS = (() => {
+  if (/bge-m3|qwen3-embedding|bge-large/i.test(EMBEDDING_MODEL)) return 1024;
+  const n = Number(process.env.CF_EMBEDDING_DIMS || 256);
+  if (usaGemma()) return DIMENSIONI_GEMMA.includes(n) ? n : 256;
+  return Number.isFinite(n) && n > 0 ? n : 256;
+})();
 /**
  * Modello linguistico predefinito: Gemma 4 26B A4B (MoE, 4B parametri attivi).
  * Costa ~7,5 volte meno in output del Llama 3.3 70B (27.273 contro 204.805
@@ -244,20 +259,18 @@ async function cfFetch<T = unknown>(
 }
 
 /**
- * Genera l'embedding di un singolo testo (query utente o chunk).
- * bge-m3 restituisce vettori a 1024 dimensioni: l'indice Vectorize DEVE essere
- * creato con le stesse dimensioni e metrica "cosine".
+ * Embedding di una QUERY (domanda dell'utente, argomento dello Studio).
+ * L'indice Vectorize DEVE avere EMBEDDING_DIMS dimensioni e metrica "cosine".
  */
 export async function embed(text: string): Promise<number[]> {
-  const [vector] = await embedMany([text]);
+  const [vector] = await embedMany([text], { tipo: "query" });
   if (!vector?.length) throw new Error("Embedding vuoto dal modello.");
   return vector;
 }
 
 /**
- * Ricerca i chunk piu' pertinenti in Vectorize (API v2).
- * returnMetadata:"all" -> riceviamo titolo/cartella/nomeFile/anno per costruire
- * il link al PDF e (se presente) il testo del chunk.
+ * Ricerca i passaggi piu' pertinenti in Vectorize (API v2), con i filtri su
+ * categoria e anno (metadata index `cartella` e `anno`).
  */
 export async function vectorSearch(
   vector: number[],
@@ -266,10 +279,12 @@ export async function vectorSearch(
 ): Promise<VectorMatch[]> {
   const accountId = requireEnv("CF_ACCOUNT_ID");
   const indexName = requireEnv("CF_VECTORIZE_INDEX");
+  // Testo e metadati correnti arrivano da Turso (tabella passaggi): dall'indice
+  // servono solo id e punteggio, e senza metadati topK puo' arrivare a 100.
   const body: Record<string, unknown> = {
     vector,
-    topK,
-    returnMetadata: "all",
+    topK: Math.min(100, topK),
+    returnMetadata: "none",
     returnValues: false,
   };
   if (filter && Object.keys(filter).length > 0) body.filter = filter;
@@ -315,36 +330,46 @@ export async function infoIndice(): Promise<{ dimensioni: number; vettori: numbe
   return { dimensioni: Number(json.result?.dimensions ?? 0), vettori: Number(json.result?.vectorCount ?? 0) };
 }
 
+export type TipoEmbedding = "query" | "documento";
+
 /**
- * Query SQL su D1 (store autoritativo del testo completo dei chunk).
- * Usata quando il testo del chunk NON e' incluso nei metadati Vectorize
- * (metadati Vectorize hanno un limite ~10 KiB per vettore).
+ * Testo inviato al modello. EmbeddingGemma rende meglio con i prefissi di
+ * compito raccomandati: "task: search result | query: ..." per le domande,
+ * "title: ... | text: ..." per i passaggi del corpus.
  */
-export async function d1Query<Row = Record<string, unknown>>(
-  sql: string,
-  params: unknown[] = []
-): Promise<Row[]> {
-  const accountId = requireEnv("CF_ACCOUNT_ID");
-  const dbId = requireEnv("CF_D1_DATABASE_ID");
-  const result = await cfFetch<Array<{ results?: Row[] }>>(
-    `/accounts/${accountId}/d1/database/${dbId}/query`,
-    { sql, params }
-  );
-  return result?.[0]?.results ?? [];
+export function testoPerEmbedding(testo: string, tipo: TipoEmbedding, titolo?: string): string {
+  const pulito = testo.replace(/\s+/g, " ").trim();
+  if (!usaGemma()) return pulito;
+  if (tipo === "query") return `task: search result | query: ${pulito}`;
+  const t = (titolo ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  return `title: ${t || "none"} | text: ${pulito}`;
 }
 
-/** Embedding di piu' testi in una chiamata (bge-m3 accetta un array). */
-export async function embedMany(texts: string[]): Promise<number[][]> {
+/** Embedding di piu' testi in una chiamata (passaggi del corpus o query). */
+export async function embedMany(
+  texts: string[],
+  opz: { tipo?: TipoEmbedding; titoli?: string[] } = {}
+): Promise<number[][]> {
   if (texts.length === 0) return [];
   const accountId = requireEnv("CF_ACCOUNT_ID");
-  const tokenIn = texts.reduce((s, t) => s + stimaToken(t.length), 0);
-  const result = await cfFetch<{ data?: number[][] }>(
+  const tipo = opz.tipo ?? "documento";
+  const input = texts.map((t, i) => testoPerEmbedding(t, tipo, opz.titoli?.[i]));
+  const tokenIn = input.reduce((s, t) => s + stimaToken(t.length), 0);
+  const body = usaGemma() ? { input, dimensions: EMBEDDING_DIMS } : { text: input };
+  const result = await cfFetch<{ data?: Array<number[] | { embedding?: number[]; index?: number }> }>(
     `/accounts/${accountId}/ai/run/${EMBEDDING_MODEL}`,
-    { text: texts },
+    body,
     { ai: { modello: EMBEDDING_MODEL, tokenIn, maxOut: 0 }, outStimati: () => 0 }
   );
-  const data = result?.data ?? [];
-  if (data.length !== texts.length) throw new Error("Numero di embedding inatteso dal modello.");
+  const grezzi = result?.data ?? [];
+  // Formato OpenAI ({index, embedding}) o matrice semplice (bge-m3).
+  const data: number[][] = new Array(grezzi.length);
+  grezzi.forEach((d, i) => {
+    if (Array.isArray(d)) data[i] = d;
+    else data[typeof d?.index === "number" ? d.index : i] = Array.isArray(d?.embedding) ? d.embedding : [];
+  });
+  if (data.length !== texts.length || data.some((v) => !v?.length)) throw new Error("Numero di embedding inatteso dal modello.");
+  if (data[0].length !== EMBEDDING_DIMS) throw new Error(`Embedding da ${data[0].length} dimensioni, attese ${EMBEDDING_DIMS}.`);
   return data;
 }
 
@@ -354,7 +379,17 @@ export interface VettoreUpsert {
   metadata?: Record<string, unknown>;
 }
 
-/** Upsert su Vectorize v2 (NDJSON). Richiede il permesso Vectorize Edit sul token. */
+/** Cancella vettori per id (passaggi di un documento cambiato o diventato doppione). */
+export async function vectorDeleteByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const accountId = requireEnv("CF_ACCOUNT_ID");
+  const indexName = requireEnv("CF_VECTORIZE_INDEX");
+  for (let i = 0; i < ids.length; i += 1000) {
+    await cfFetch(`/accounts/${accountId}/vectorize/v2/indexes/${indexName}/delete_by_ids`, { ids: ids.slice(i, i + 1000) });
+  }
+}
+
+/** Upsert su Vectorize v2 (NDJSON). Richiede il permesso Vectorize Write sul token. */
 export async function vectorUpsert(vectors: VettoreUpsert[]): Promise<void> {
   if (vectors.length === 0) return;
   const accountId = requireEnv("CF_ACCOUNT_ID");

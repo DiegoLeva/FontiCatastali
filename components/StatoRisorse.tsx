@@ -73,16 +73,29 @@ export function StatoRisorseSezione({ r }: { r: StatoRisorse }) {
 
       <div className="mt-3 border-t border-hairline pt-3 text-[13px] text-body">
         <p>
-          Vectorize (ricerca semantica di Normie):{" "}
+          Vectorize (ricerca semantica di Normie, Studio e ricerca ibrida):{" "}
           <span className={`font-medium ${v.consentito ? "text-[#0a6b2e] dark:text-[#5fd38d]" : "text-[#9a4a07] dark:text-[#f5b86a]"}`}>
-            {v.consentito ? "attiva" : "sospesa"}
+            {v.consentito ? "attiva" : v.dimensioni === v.dimensioniModello && !v.indice.pronto ? "in ricostruzione" : "sospesa"}
           </span>
         </p>
         <p className="mt-1 text-[12.5px] text-mute">{v.motivo}</p>
         {v.dimensioni > 0 && (
-          <p className="mt-1 text-[12.5px] text-mute">
-            Indice: {it(v.vettori)} vettori × {v.dimensioni} dimensioni = {milioni(v.memorizzate)} memorizzate (incluse nel piano: 10 M) · query questo mese: {it(v.queryMese)}
-          </p>
+          <>
+            <p className="mt-2 text-[12.5px] text-body">
+              Dimensioni memorizzate: <span className="tabular-nums text-ink">{milioni(v.memorizzate)}</span> / 10 M incluse
+              <span className="text-mute"> · tetto dell&apos;app {milioni(v.tettoMemorizzate)} · {it(v.vettori)} passaggi × {v.dimensioni} dimensioni</span>
+            </p>
+            <Barra valore={v.memorizzate} massimo={10_000_000} etichetta="Dimensioni memorizzate rispetto alle 10 M incluse" />
+            <p className="mt-2 text-[12.5px] text-body">
+              Dimensioni interrogate questo mese: <span className="tabular-nums text-ink">{milioni(v.interrogateMese)}</span> / {milioni(v.tettoInterrogate)}
+              <span className="text-mute"> · tetto dell&apos;app, 50 M incluse · {it(v.queryMese)} query{v.bloccateMese ? ` · ${it(v.bloccateMese)} passate alla ricerca testuale` : ""}</span>
+            </p>
+            <Barra valore={v.interrogateMese} massimo={v.tettoInterrogate} etichetta="Dimensioni interrogate nel mese rispetto al tetto" />
+            <p className="mt-2 text-[12.5px] text-mute">
+              Indice {v.modello.replace(/^@cf\//, "")} a {v.dimensioniModello} dimensioni: {it(v.indice.documenti)} documenti indicizzati
+              {v.indice.completataIl ? ` · completato il ${new Date(v.indice.completataIl).toLocaleDateString("it-IT")}` : " · ricostruzione in corso, riprende ogni notte"}
+            </p>
+          </>
         )}
       </div>
 

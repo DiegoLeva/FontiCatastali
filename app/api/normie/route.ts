@@ -3,7 +3,6 @@ import {
   embed,
   vectorSearch,
   rerank,
-  d1Query,
   chat,
   quotaEsaurita,
   ripristinoQuota,
@@ -28,6 +27,7 @@ import { getDb } from "@/lib/db";
 import { conServizioAi } from "@/lib/ai/budget";
 import { prenotaQueryVectorize } from "@/lib/ai/vectorize";
 import { recuperoTestuale } from "@/lib/normie-testuale";
+import { testiPassaggi } from "@/lib/ai/passaggi";
 
 // Le chiamate REST a Cloudflare + LLM richiedono il runtime Node.
 export const runtime = "nodejs";
@@ -37,8 +37,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const RETRIEVE_K = 25; // candidati recuperati da Vectorize (poi rerankati)
+const MAX_PER_DOC = 3; // passaggi per documento prima del rerank (varieta' di fonti)
 const RERANK_K = 8; // chunk finali passati al modello dopo il rerank
-const MIN_SCORE = 0.3; // prefiltro cosine grezzo; la selezione fine la fa il reranker
+const MIN_SCORE = 0.2; // prefiltro cosine largo (EmbeddingGemma): la selezione fine la fa il reranker
 // Tetto di output: la prenotazione dei neuroni copre il caso peggiore, quindi
 // un tetto piu' basso lascia piu' risposte nella quota gratuita giornaliera.
 const MAX_ANSWER_TOKENS = 1500;
@@ -95,54 +96,42 @@ function buildVectorFilter(f?: NormieFilters): VectorizeFilter | undefined {
 }
 
 /**
- * Recupera testo + metadati dei chunk da D1, che e' la fonte AUTORITATIVA per
- * nome file, titolo, cartella e anno (i metadati Vectorize servono solo alla
- * ricerca vettoriale e ai filtri categoria/anno, che non cambiano mai con una
- * rinomina). Cosi' rinominare i file richiede di aggiornare solo D1.
+ * Testo e metadati dei passaggi trovati da Vectorize: da Turso (tabella
+ * `passaggi` + documenti), fonte autoritativa per titolo, cartella, nome file
+ * e anno anche dopo rinomine o bonifiche dei metadati.
  */
-interface ChunkRow {
-  id: string;
-  doc_id: number;
-  titolo: string;
-  cartella: string;
-  nome_file: string;
-  anno: number | string;
-  testo: string;
-}
-
 async function resolveChunks(
   matches: VectorMatch[]
 ): Promise<RetrievedChunk[]> {
   if (matches.length === 0) return [];
-  const ids = matches.map((m) => m.id);
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await d1Query<ChunkRow>(
-    `SELECT id, doc_id, titolo, cartella, nome_file, anno, testo
-     FROM chunks WHERE id IN (${placeholders})`,
-    ids
-  );
-  const byId = new Map(rows.map((r) => [String(r.id), r]));
-
+  const testi = await testiPassaggi(getDb(), matches.map((m) => m.id));
   return matches
-    .map((m) => {
-      const row = byId.get(m.id);
-      // D1 autoritativo; fallback ai metadati Vectorize se la riga manca.
-      const metadata = row
-        ? {
-            docId: Number(row.doc_id),
-            titolo: String(row.titolo ?? ""),
-            cartella: String(row.cartella ?? ""),
-            nomeFile: String(row.nome_file ?? ""),
-            anno: String(row.anno ?? ""),
-          }
-        : m.metadata ?? {};
+    .map((m): RetrievedChunk | null => {
+      const t = testi.get(m.id);
+      if (!t || !t.testo) return null;
       return {
-        metadata,
-        testo: row?.testo ?? m.metadata?.testo ?? "",
+        metadata: { docId: t.docId, titolo: t.titolo, cartella: t.cartella, nomeFile: t.nomeFile, anno: t.anno },
+        testo: t.testo,
         score: m.score,
       };
     })
-    .filter((c) => c.testo.trim().length > 0);
+    .filter((c): c is RetrievedChunk => c !== null);
+}
+
+/** Semantici + testuali senza doppioni, al massimo MAX_PER_DOC per documento. */
+function unisciCandidati(...gruppi: RetrievedChunk[][]): RetrievedChunk[] {
+  const visti = new Set<string>();
+  const perDoc = new Map<string, number>();
+  const out: RetrievedChunk[] = [];
+  for (const c of gruppi.flat()) {
+    const doc = String(c.metadata.docId ?? c.metadata.nomeFile ?? "");
+    const chiave = `${doc}|${c.testo.replace(/\s+/g, " ").slice(0, 120)}`;
+    if (visti.has(chiave) || (perDoc.get(doc) ?? 0) >= MAX_PER_DOC) continue;
+    visti.add(chiave);
+    perDoc.set(doc, (perDoc.get(doc) ?? 0) + 1);
+    out.push(c);
+  }
+  return out;
 }
 
 function sanitizeHistory(history: unknown): ChatMessage[] {
@@ -199,23 +188,28 @@ export async function POST(
 
 async function rispondi(question: string, body: NormieRequestBody): Promise<NextResponse<NormieResponse>> {
   try {
-    // 1-3) Recupero. Semantico (Vectorize) solo se resta entro le quote
-    //      incluse nel piano; altrimenti testuale (FTS di Turso + estratti
-    //      dei testi integrali). Il formato dei chunk e' lo stesso.
-    let chunks: RetrievedChunk[] = [];
-    if (await prenotaQueryVectorize()) {
-      // Espansione della query: scioglie sigle + sinonimi (solo per l'embedding).
-      const queryVector = await embed(expandQuery(question));
-      const filter = buildVectorFilter(body.filters);
-      const matches = (await vectorSearch(queryVector, RETRIEVE_K, filter)).filter(
-        (m) => m.score >= MIN_SCORE
-      );
-      // Testo + metadati dei chunk da D1 (fonte autoritativa).
-      chunks = await resolveChunks(matches);
-    }
-    if (chunks.length === 0) {
-      chunks = await recuperoTestuale(getDb(), question, body.filters);
-    }
+    // 1-3) Recupero ibrido. Testuale sempre (FTS di Turso + estratti dei testi
+    //      integrali: imbattibile su codici ed estremi come F/3 o Circ. 2/2016);
+    //      semantico (Vectorize) solo se resta entro le quote incluse nel piano
+    //      e l'indice e' completo. Il reranker sceglie tra i due canali.
+    const [semantici, testuali] = await Promise.all([
+      (async (): Promise<RetrievedChunk[]> => {
+        if (!(await prenotaQueryVectorize())) return [];
+        try {
+          // Espansione della query: scioglie sigle + sinonimi (solo per l'embedding).
+          const queryVector = await embed(expandQuery(question));
+          const filter = buildVectorFilter(body.filters);
+          const matches = (await vectorSearch(queryVector, RETRIEVE_K, filter)).filter((m) => m.score >= MIN_SCORE);
+          return await resolveChunks(matches);
+        } catch (err) {
+          if (quotaEsaurita(err)) throw err;
+          console.warn("[/api/normie] canale semantico non disponibile:", (err as Error).message);
+          return [];
+        }
+      })(),
+      recuperoTestuale(getDb(), question, body.filters),
+    ]);
+    let chunks = unisciCandidati(semantici, testuali);
     if (chunks.length === 0) {
       return NextResponse.json({ answer: NO_CONTEXT_ANSWER, sources: [] });
     }

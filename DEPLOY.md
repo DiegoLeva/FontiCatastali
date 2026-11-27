@@ -156,10 +156,9 @@ extra: l'API route gira già in runtime Node.
 
 - Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
   servono le tabelle `aggiornamenti_*` e `studio_dossier`, create al primo uso.
-- Il token **Cloudflare** con soli permessi di lettura basta per Normie e lo
-  Studio; per indicizzare in Normie anche gli atti importati dal cron servono
-  **Vectorize Edit** e **D1 Edit** (senza, la ricerca, la mappa e lo Studio li
-  vedono comunque; la pagina `/aggiornamenti` segnala l'arretrato).
+- Il token **Cloudflare** deve avere **Workers AI Read** e **Vectorize Write**
+  (indicizzazione degli atti nuovi e ricostruzione dell'indice). D1 non serve
+  più: il testo dei passaggi indicizzati sta su Turso (tabella `passaggi`).
 - **Spesa AI a 0 € extra** (`lib/ai/budget.ts`): Cloudflare include 10.000
   neuroni al giorno per account (azzerati alle 00:00 UTC, 01:00 in Italia);
   sul piano Workers Paid il resto si paga. Ogni chiamata prenota su Turso il
@@ -170,11 +169,43 @@ extra: l'API route gira già in runtime Node.
   cui il contatore nasce la quota è considerata già consumata. Consumi su
   `/aggiornamenti` e `/api/risorse`. Con il permesso **Account Analytics:
   Read** sul token il contatore si allinea al consumo reale dell'account.
-- **Vectorize** (`lib/ai/vectorize.ts`): Workers Paid include 50 M dimensioni
-  interrogate e 10 M memorizzate al mese, e le interrogate contano anche i
-  vettori memorizzati. Con l'indice oltre quota l'app non interroga né
-  aggiunge vettori: Normie usa la ricerca testuale (FTS + estratti +
-  reranker).
+- **Vectorize** (`lib/ai/vectorize.ts`, `lib/ai/indice.ts`): Workers Paid
+  include 10 M dimensioni memorizzate e 50 M interrogate al mese, e le
+  interrogate valgono (query + vettori memorizzati) × dimensioni. L'indice usa
+  EmbeddingGemma-2 a 256 dimensioni (154 neuroni per milione di token) con
+  tetti rigidi: **8,5 M memorizzate** (`VECTORIZE_MAX_MEMORIZZATE`) e **20 M
+  interrogate al mese** (`VECTORIZE_MAX_INTERROGATE`, contatore su Turso). Al
+  tetto, o con l'indice incompleto o da ricreare, Normie, Studio e ricerca
+  ibrida usano la ricerca testuale. Stato su `/aggiornamenti`.
+
+### Ricostruzione di Vectorize
+
+Serve solo se cambiano modello o dimensioni (l'app lo rileva e non interroga
+un indice con dimensioni diverse). Gratuita: al massimo
+`VECTORIZE_NEURONI_GIORNO` (5.000) neuroni al giorno.
+
+1. Ricrea l'indice con le dimensioni del modello (256) e i metadata index:
+
+```bash
+npx wrangler vectorize delete normie-catasto
+```
+
+```bash
+npx wrangler vectorize create normie-catasto --dimensions=256 --metric=cosine
+```
+
+```bash
+npx wrangler vectorize create-metadata-index normie-catasto --property-name=anno --type=number
+```
+
+```bash
+npx wrangler vectorize create-metadata-index normie-catasto --property-name=cartella --type=string
+```
+
+2. L'indicizzazione parte da sola ogni notte (`/api/cron/indicizza`, 03:17
+   UTC) e riprende dal punto in cui si era fermata; per accelerarla:
+   `GET /api/manutenzione/vectorize?azione=esegui` (con `Authorization: Bearer
+   <CRON_SECRET>`), stato con `?azione=stato`.
 - `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
   (cron e Studio, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare
