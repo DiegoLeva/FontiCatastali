@@ -20,6 +20,7 @@
     "test:metadati": "tsx scripts/test-metadati.ts",
     "bonifica:metadati": "tsx scripts/bonifica-metadati.ts",
     "ocr:locale": "tsx scripts/ocr-locale.ts",
+    "importa:storico-ade": "tsx scripts/importa-storico-ade.ts",
     "test:watchlist": "tsx scripts/test-watchlist.ts",
     "test:archivio": "tsx scripts/test-archivio.ts",
     "test:vectorize": "tsx scripts/test-vectorize.ts",
