@@ -116,6 +116,10 @@ async function main() {
   verifica(!senzaFirma.anno && senzaFirma.revisione.some((m) => /cita il 2006/.test(m)), "#334: nessuna data propria trovata: resta da revisionare (niente indovinelli)");
   const titoloCorso = nm({ id: 573, cartella: "05 - Corsi e Indicazioni", nomeFile: "s.d. - Corso.pdf", titolo: "Corso", anno: 0, testo: "Agenzia del Territorio\nIl classamento delle unità immobiliari urbane\nModulo 2" });
   verifica(titoloCorso.titolo?.valore === "Il classamento delle unità immobiliari urbane", `#573: titolo dalla prima intestazione del testo («${titoloCorso.titolo?.valore}»)`);
+  const rumore = nm({ id: 575, cartella: "05 - Corsi e Indicazioni", nomeFile: "s.d. - Corso.pdf", titolo: "Non è possibile estrarre informazioni utili dal testo fornito", anno: 0, testo: "Jadns a|jap NUIUNU 13p 3 IUISSELI 19p ejjage\nzz" });
+  verifica(!rumore.titolo && rumore.revisione.length > 0, "#575 (caso reale): una riga di rumore OCR non diventa un titolo");
+  const sessantuno = nm({ id: 1305, cartella: "02 - Circolari", nomeFile: "2010 - Circ. 61 - Aggiornamento sistema informativo demanio.pdf", titolo: "Circ. 61 - Aggiornamento sistema informativo demanio", anno: 2010, testo: "CIRCOLARE n. 6 del 3 marzo 2010 OGGETTO: sistema informativo" });
+  verifica(sessantuno.revisione.some((m) => /n\. 61/.test(m)), "#1305 (caso reale): «61» contro «6» non è un anno attaccato: resta da revisionare");
   const titoloVuoto = nm({ id: 422, cartella: "03 - Comunicati stampa", nomeFile: "2015 - Com. 73489 - Non c'è testo da elaborare.pdf", titolo: "Com. 73489 - Non c'è testo da elaborare", anno: 2015, testo: "12 3 4" });
   verifica(!titoloVuoto.titolo && titoloVuoto.revisione.length > 0, "#422: testo senza intestazioni utili: titolo non inventato");
 

@@ -404,7 +404,8 @@ function tipoDelTitolo(titolo: string): string | null {
 function numeroNomeSospetto(nome: string, testa: string): boolean {
   const a = nome.split("/")[0].replace(/\D/g, "");
   const b = testa.split("/")[0].replace(/\D/g, "");
-  return a.length >= 4 || (!!b && a.length > b.length && a.startsWith(b));
+  // "589" = "5" + "89": servono almeno due cifre in piu' (un anno), non "61" contro "6".
+  return a.length >= 4 || (!!b && a.length - b.length >= 2 && a.startsWith(b));
 }
 
 const stessoNumero = (a: string, b: string) => parseInt(a, 10) === parseInt(b, 10);
@@ -431,12 +432,19 @@ export function dataProtocollo(testo: string): string | null {
 
 const BOILERPLATE = /\b(?:agenzia|entrate|territorio|direzione|ufficio|ministero|repubblica|roma|prot|pagin|allegat|indice|sommario|premessa|copia|riservat|bollettino|gazzetta|www|http|dipartimento|presidenza|consiglio dei ministri)\b/i;
 
+/** Parole funzionali: un titolo italiano vero ne ha almeno una (il rumore OCR no). */
+const FUNZIONALI = /(?:^|\s)(?:di|del|della|dello|dei|degli|delle|e|ed|per|in|con|la|il|lo|le|gli|al|alla|ai|alle|nel|nella|nei|nelle|sul|sulla|su|da|dal|dalla|tra|fra|un|una)(?=\s|$)/i;
+const PAROLA = /^[a-zàáèéìíòóùú'’]+$/i;
+
 /** Primo titolo vero nelle prime righe ("Il classamento delle unità immobiliari"). */
 function titoloDalTesto(testo: string): string | null {
   for (const grezza of testo.slice(0, 700).split(/\r?\n/).slice(0, 14)) {
     const riga = grezza.replace(/\s+/g, " ").replace(/^[\s\d.)•\-–]+/, "").trim();
     const parole = riga.split(" ").filter((p) => /\p{L}{4,}/u.test(p));
     if (parole.length < 3 || riga.split(" ").length > 16 || riga.length > 110) continue;
+    if (/[|<>{}[\]=_*#@~^\\]/.test(riga) || /\d\p{L}|\p{L}\d/u.test(riga) || !FUNZIONALI.test(riga)) continue;
+    const vere = parole.filter((p) => PAROLA.test(p.replace(/[.,;:()«»"]/g, "")) && /[aeiouàèéìòù]/i.test(p));
+    if (vere.length / parole.length < 0.8) continue;
     const lettere = (riga.match(/\p{L}/gu) ?? []).length;
     if (lettere / riga.length < 0.7 || BOILERPLATE.test(riga) || RE_DATA.test(riga) || titoloInservibile(riga)) continue;
     const t = riga.toLowerCase() === riga || riga.toUpperCase() === riga ? riga.toLowerCase() : riga;
@@ -582,19 +590,20 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
     }
   }
   if (!anno && d.anno) {
-    const citati = [...`${d.testo} ${d.fine ?? ""}`.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
+    const citati = [...d.testo.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
+    const tuttiCitati = [...`${d.testo} ${d.fine ?? ""}`.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
     const max = citati.length ? Math.max(...citati) : 0;
     if (max > d.anno + 3 && !derivata) {
       const confermato = LEGISLATIVI.has(tipoAtto) && (annoData === d.anno || schema?.anno === d.anno || testa?.data?.slice(0, 4) === String(d.anno));
       // Data propria dell'atto (firma in fondo o protocollo in testa) coerente con
       // gli anni citati: l'anno registrato e' smentito due volte.
-      const propria = proprieDate.find((x) => x.fonte !== "intestazione" && Number(x.data.slice(0, 4)) >= max - 1 && citati.every((a) => a <= Number(x.data.slice(0, 4)) + 1));
+      const propria = proprieDate.find((x) => x.fonte !== "intestazione" && Number(x.data.slice(0, 4)) >= max - 1 && tuttiCitati.every((a) => a <= Number(x.data.slice(0, 4)) + 1));
       if (confermato) {
         risolti.push(`anno ${d.anno} confermato dall'intestazione: le date successive sono modifiche citate nel testo coordinato`);
       } else if (propria && !didattica && !discorde) {
         const valore = Number(propria.data.slice(0, 4));
         anno = { valore, confidenza: "media", motivo: `${propria.fonte} del ${dataLeggibile(propria.data)} (il testo cita il ${max}, impossibile nel ${d.anno})` };
-        risolti.push(`anno ${valore} dalla ${propria.fonte}: il ${d.anno} registrato è smentito dagli anni citati (${max})`);
+        risolti.push(`anno ${valore} ${propria.fonte === "protocollo" ? "dal" : "dalla"} ${propria.fonte}: il ${d.anno} registrato è smentito dagli anni citati (${max})`);
       } else {
         revisione.push(`anno ${d.anno} registrato, ma il testo cita il ${max}`);
       }
