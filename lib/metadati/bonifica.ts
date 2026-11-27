@@ -109,8 +109,11 @@ export interface RapportoBonifica {
   conData: number;
   duplicati: number;
   daRevisionare: number;
+  /** Documenti con ambiguita' sciolte dalle regole v2 (con o senza modifica). */
+  risolti: number;
   modifiche: Modifica[];
   revisione: Array<{ id: number; titolo: string; cartella: string; anno: number; motivi: string[] }>;
+  risoluzioni: Array<{ id: number; titolo: string; cartella: string; anno: number; motivi: string[] }>;
   /** Campione di duplicati esatti (copia -> canonico) per la verifica. */
   esempiDuplicati: Array<{ id: number; titolo: string; di: number }>;
   durataMs: number;
@@ -125,6 +128,7 @@ interface Riga {
   titolo: string;
   anno: number;
   inizio: string;
+  fine: string;
   impronta: string | null;
 }
 
@@ -168,8 +172,10 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
     conData: 0,
     duplicati: 0,
     daRevisionare: 0,
+    risolti: 0,
     modifiche: [],
     revisione: [],
+    risoluzioni: [],
     esempiDuplicati: [],
     durataMs: 0,
     completata: false,
@@ -200,6 +206,7 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
       titolo: String(x.titolo ?? ""),
       anno: Number(x.anno ?? 0) || 0,
       inizio: String(x.inizio ?? ""),
+      fine: String(x.coda ?? ""),
       impronta: impronta(Number(x.lunghezza ?? 0), String(x.testa ?? ""), String(x.coda ?? "")),
     }));
   };
@@ -246,7 +253,7 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
     }
     for (const d of righe) {
       dopo = d.id;
-      const p: Proposta = normalizzaMetadati({ id: d.id, cartella: d.cartella, nomeFile: d.nomeFile, titolo: d.titolo, anno: d.anno, testo: d.inizio } satisfies DocMeta);
+      const p: Proposta = normalizzaMetadati({ id: d.id, cartella: d.cartella, nomeFile: d.nomeFile, titolo: d.titolo, anno: d.anno, testo: d.inizio, fine: d.fine } satisfies DocMeta);
       const noto = opz.noti?.get(d.id);
       const tipoAtto = noto?.tipo && TIPO_STUDIO[noto.tipo] ? noto.tipo : p.tipoAtto;
       const numero = noto?.numero ?? p.numero;
@@ -334,6 +341,10 @@ export async function eseguiBonifica(db: Client, opz: OpzioniBonifica): Promise<
     if (p.revisione.length) {
       r.daRevisionare++;
       r.revisione.push({ id: d.id, titolo: d.titolo, cartella: d.cartella, anno: d.anno, motivi: p.revisione });
+    }
+    if (p.risolti.length) {
+      r.risolti++;
+      r.risoluzioni.push({ id: d.id, titolo: d.titolo, cartella: d.cartella, anno: d.anno, motivi: p.risolti });
     }
   }
   for (const c of correzioniCanonico) {

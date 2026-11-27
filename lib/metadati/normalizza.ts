@@ -17,7 +17,7 @@
  * colonne aggiuntive.
  */
 
-export const REVISIONE_REGOLE = 1;
+export const REVISIONE_REGOLE = 2;
 
 export interface DocMeta {
   id: number;
@@ -27,6 +27,8 @@ export interface DocMeta {
   anno: number;
   /** Primi ~2.500 caratteri del testo estratto. */
   testo: string;
+  /** Ultimi ~2.000 caratteri (firma, data, protocollo). */
+  fine?: string;
 }
 
 export type Confidenza = "alta" | "media" | "bassa";
@@ -43,6 +45,8 @@ export interface Proposta {
   titolo: { valore: string; motivo: string } | null;
   /** Casi ambigui: segnalati, mai applicati. */
   revisione: string[];
+  /** Ambiguita' sciolte da regole verificate (regole v2), con il perche'. */
+  risolti: string[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -244,6 +248,8 @@ interface Intestazione {
   numero: string | null;
   data: string | null;
   posizione: number;
+  /** La data non e' nell'intestazione ma ripresa da "Roma, <data>". */
+  dataDaFirma?: boolean;
 }
 
 const NUM = `(?:\\s*,?\\s*n\\.?\\s*°?\\s*(\\d+(?:\\s*\\/\\s*[A-Za-z0-9]+)?))?`;
@@ -304,7 +310,9 @@ export function intestazione(testo: string): Intestazione | null {
     const zona = testo.slice(0, 1200).replace(/\s+/g, " ");
     const dopo = zona.slice(migliore.posizione, migliore.posizione + 90);
     const subito = dopo.match(new RegExp(`^[^;:]{0,40}?\\b(?:del|in data)\\s+(${DATA})`, "i"));
-    migliore.data = dataIso(subito?.[1] ?? "") ?? dataRoma(testo);
+    const propria = dataIso(subito?.[1] ?? "");
+    migliore.data = propria ?? dataRoma(testo);
+    migliore.dataDaFirma = !propria && !!migliore.data;
   }
   // "Circolare n. 14/2007": l'anno nel numero deve concordare con la data.
   const annoNumero = migliore?.numero?.match(/\/((?:18|19|20)\d{2})$/)?.[1];
@@ -378,6 +386,66 @@ function titoloDiRipiego(d: DocMeta, schema: SchemaNome | null): string | null {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Regole v2: ambiguita' che si sciolgono con due segnali concordi             */
+/* -------------------------------------------------------------------------- */
+
+/** Raccolte didattiche: i testi citano atti altrui, la tipologia non si tocca. */
+const DIDATTICHE = /cors|slide|convegn|manual|massimar|modulistic|(?<!linee )\bguid[ae]\b/;
+
+/** Tipologia esplicita nel titolo, anche abbreviata ("Circ. 12 E", "Istr. 9", "Com. 5"). */
+function tipoDelTitolo(titolo: string): string | null {
+  const libero = tipoDaTitoloLibero(titolo);
+  if (libero) return libero;
+  const abbr = titolo.trim().match(/^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.]*)\s*\d/);
+  return abbr ? tipoDaAbbreviazione(abbr[1]) : null;
+}
+
+/** Numero del nome inaffidabile: protocollo (4+ cifre) o numero con l'anno attaccato ("589", "1188"). */
+function numeroNomeSospetto(nome: string, testa: string): boolean {
+  const a = nome.split("/")[0].replace(/\D/g, "");
+  const b = testa.split("/")[0].replace(/\D/g, "");
+  return a.length >= 4 || (!!b && a.length > b.length && a.startsWith(b));
+}
+
+const stessoNumero = (a: string, b: string) => parseInt(a, 10) === parseInt(b, 10);
+
+/**
+ * Data di firma in fondo all'atto: "Roma, 15 marzo 2011" o una data subito
+ * prima di "IL DIRETTORE / IL DIRIGENTE / IL CAPO ...". L'ultima occorrenza.
+ */
+export function dataFirmaFinale(fine: string): string | null {
+  const zona = fine.replace(/\s+/g, " ");
+  const date: string[] = [];
+  for (const m of zona.matchAll(new RegExp(`\\broma,?\\s+(?:l[iì]\\s+)?(${DATA})`, "gi"))) date.push(m[1]);
+  for (const m of zona.matchAll(new RegExp(`(${DATA})\\s*[,.]?\\s*(?:IL|LA)\\s+(?:DIRETTORE|DIRIGENTE|CAPO|RESPONSABILE|PRESIDENTE)`, "g"))) date.push(m[1]);
+  const valide = date.map((x) => dataIso(x)).filter((x): x is string => !!x);
+  return valide.length ? valide.sort().at(-1)! : null;
+}
+
+/** Protocollo dell'atto in testa: "Prot. n. 2011/5577 del 14 marzo 2011". */
+export function dataProtocollo(testo: string): string | null {
+  const zona = testo.slice(0, 500).replace(/\s+/g, " ");
+  const m = zona.match(new RegExp(`\\bprot(?:ocollo)?\\.?\\s*(?:n\\.?\\s*°?\\s*)?[\\w/.-]{2,20}\\s+(?:del|in data)\\s+(${DATA})`, "i"));
+  return m ? dataIso(m[1]) : null;
+}
+
+const BOILERPLATE = /\b(?:agenzia|entrate|territorio|direzione|ufficio|ministero|repubblica|roma|prot|pagin|allegat|indice|sommario|premessa|copia|riservat|bollettino|gazzetta|www|http|dipartimento|presidenza|consiglio dei ministri)\b/i;
+
+/** Primo titolo vero nelle prime righe ("Il classamento delle unità immobiliari"). */
+function titoloDalTesto(testo: string): string | null {
+  for (const grezza of testo.slice(0, 700).split(/\r?\n/).slice(0, 14)) {
+    const riga = grezza.replace(/\s+/g, " ").replace(/^[\s\d.)•\-–]+/, "").trim();
+    const parole = riga.split(" ").filter((p) => /\p{L}{4,}/u.test(p));
+    if (parole.length < 3 || riga.split(" ").length > 16 || riga.length > 110) continue;
+    const lettere = (riga.match(/\p{L}/gu) ?? []).length;
+    if (lettere / riga.length < 0.7 || BOILERPLATE.test(riga) || RE_DATA.test(riga) || titoloInservibile(riga)) continue;
+    const t = riga.toLowerCase() === riga || riga.toUpperCase() === riga ? riga.toLowerCase() : riga;
+    return t.charAt(0).toUpperCase() + t.slice(1).replace(/[.:;,\s]+$/, "");
+  }
+  return null;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Normalizzazione                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -406,6 +474,7 @@ function estremi(tipo: string, numero: string | null, data: string | null): stri
 
 export function normalizzaMetadati(d: DocMeta): Proposta {
   const revisione: string[] = [];
+  const risolti: string[] = [];
   const schema = schemaNome(d.nomeFile);
   const cartellaNorm = norm(d.cartella.replace(/^\s*\d+\s*-\s*/, ""));
   const divulgativa = DIVULGATIVE.test(cartellaNorm);
@@ -418,23 +487,46 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   let tipoAtto = daNome ?? daTitolo ?? daCartella;
   let origineTipo: Proposta["origineTipo"] = daNome || daTitolo ? "titolo" : "cartella";
   const testaAffidabile = !!testa && testa.posizione < 320 && !!(testa.numero || testa.data);
+  const numeroNome = numeroDaSchema(schema?.numero ?? null, d.anno || schema?.anno || 0) ?? numeroDaTitolo(d.titolo);
+  const didattica = DIDATTICHE.test(cartellaNorm) || OPERE_DERIVATE.test(d.titolo);
   if (testaAffidabile && testa) {
     const generico = ["Decreto", "Documento", "Allegato"].includes(tipoAtto) || TIPO_STUDIO[tipoAtto] === TIPO_STUDIO[testa.tipo];
     if (!divulgativa && (generico || (/sito ade/.test(cartellaNorm) && !daTitolo))) {
       tipoAtto = testa.tipo === "Decreto" && TIPO_STUDIO[tipoAtto] === "Decreto" && tipoAtto !== "Decreto" ? tipoAtto : testa.tipo;
       origineTipo = "testo";
     } else if (TIPO_STUDIO[tipoAtto] !== TIPO_STUDIO[testa.tipo]) {
-      revisione.push(`il testo si apre come ${testa.tipo}${testa.numero ? ` n. ${testa.numero}` : ""}, ma la scheda indica ${tipoAtto}`);
+      // v2: l'intestazione vince se un secondo segnale la conferma.
+      const tipoTitolo = tipoDelTitolo(d.titolo);
+      const conferma =
+        origineTipo === "cartella"
+          ? "il resto della scheda indica solo la cartella"
+          : tipoTitolo && TIPO_STUDIO[tipoTitolo] === TIPO_STUDIO[testa.tipo]
+            ? `anche il titolo indica ${tipoTitolo}`
+            : testa.numero && numeroNome && stessoNumero(testa.numero, numeroNome)
+              ? `stesso numero (${testa.numero}) nel nome e nell'intestazione`
+              : null;
+      if (conferma && !didattica) {
+        risolti.push(`tipologia dall'intestazione «${testa.tipo}${testa.numero ? ` n. ${testa.numero}` : ""}» al posto di ${tipoAtto}: ${conferma}`);
+        tipoAtto = testa.tipo;
+        origineTipo = "testo";
+      } else {
+        revisione.push(`il testo si apre come ${testa.tipo}${testa.numero ? ` n. ${testa.numero}` : ""}, ma la scheda indica ${tipoAtto}`);
+      }
     }
   }
 
   // 2) Numero e data.
   const concorde = !!testa && TIPO_STUDIO[testa.tipo] === TIPO_STUDIO[tipoAtto];
-  const numeroNome = numeroDaSchema(schema?.numero ?? null, d.anno || schema?.anno || 0) ?? numeroDaTitolo(d.titolo);
   // Numero del nome diverso da quello dell'intestazione ("Circ. 3" contro
   // "CIRCOLARE n. 24"): bollettini o raccolte, l'intestazione non e' affidabile.
-  const discorde =
-    concorde && !!testa?.numero && !!numeroNome && !LEGISLATIVI.has(tipoAtto) && parseInt(testa.numero, 10) !== parseInt(numeroNome, 10);
+  let discorde =
+    concorde && !!testa?.numero && !!numeroNome && !LEGISLATIVI.has(tipoAtto) && !stessoNumero(testa.numero, numeroNome);
+  if (discorde && numeroNomeSospetto(numeroNome!, testa!.numero!)) {
+    // v2: "Circ. 589" contro "CIRCOLARE n. 5": il numero del nome e' un
+    // protocollo o ha l'anno attaccato, quello dell'intestazione e' l'atto.
+    risolti.push(`numero dall'intestazione (n. ${testa!.numero}): quello del nome (${numeroNome}) è un protocollo o ha l'anno attaccato`);
+    discorde = false;
+  }
   if (discorde) revisione.push(`il nome indica il n. ${numeroNome}, l'intestazione il n. ${testa!.numero}`);
   let numero = concorde && testa?.numero && !discorde ? testa.numero : numeroNome;
   const firma = !divulgativa && PRASSI.test(cartellaNorm) ? dataRoma(d.testo) : null;
@@ -442,6 +534,18 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   const data = dataTitolo ?? (concorde && testa?.data && !discorde ? testa.data : firma);
   // "Decr. 27" con "DECRETO 27 maggio 2015": il numero del nome e' il giorno.
   if (numero && data && !testa?.numero && Number(numero) === Number(data.slice(8, 10))) numero = null;
+  // Date proprie dell'atto da fonti indipendenti (regole v2).
+  const proprieDate: Array<{ fonte: string; data: string }> = [];
+  // L'intestazione conta solo con una data sua (non ripresa dalla firma).
+  if (testa?.data && testa.posizione < 120 && !testa.dataDaFirma) proprieDate.push({ fonte: "intestazione", data: testa.data });
+  if (!divulgativa) {
+    const roma = dataRoma(d.testo);
+    if (roma) proprieDate.push({ fonte: "firma iniziale", data: roma });
+    const finale = d.fine ? dataFirmaFinale(d.fine) : null;
+    if (finale) proprieDate.push({ fonte: "firma in fondo", data: finale });
+    const prot = dataProtocollo(d.testo);
+    if (prot) proprieDate.push({ fonte: "protocollo", data: prot });
+  }
 
   // 3) Anno.
   let anno: Proposta["anno"] = null;
@@ -464,27 +568,50 @@ export function normalizzaMetadati(d: DocMeta): Proposta {
   } else if (annoData && annoData !== d.anno) {
     const citati = [...d.testo.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
     const coerente = citati.every((a) => a <= annoData + 1);
+    const conferme = proprieDate.filter((x) => Number(x.data.slice(0, 4)) === annoData);
     if (testaAffidabile && concorde && !derivata && !discorde) {
       anno = { valore: annoData, confidenza: "alta", motivo: `intestazione: ${tipoAtto}${numero ? ` n. ${numero}` : ""} del ${dataLeggibile(data!)}` };
     } else if (!testaAffidabile && data === firma && refuso(d.anno, annoData) && coerente && !derivata) {
       anno = { valore: annoData, confidenza: "media", motivo: `refuso dell'anno: firmato «Roma, ${dataLeggibile(data!)}»` };
+    } else if (!derivata && !didattica && !discorde && coerente && conferme.length >= 2) {
+      // v2: due date proprie dell'atto (intestazione, firma, protocollo) concordano.
+      anno = { valore: annoData, confidenza: "alta", motivo: `date proprie concordi: ${conferme.map((x) => x.fonte).join(" e ")} (${dataLeggibile(data!)})` };
+      risolti.push(`anno ${annoData} da ${conferme.map((x) => x.fonte).join(" e ")}`);
     } else {
       revisione.push(`anno ${d.anno} registrato, ma il testo è datato ${dataLeggibile(data!)}`);
     }
   }
   if (!anno && d.anno) {
-    const citati = [...d.testo.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
+    const citati = [...`${d.testo} ${d.fine ?? ""}`.matchAll(RE_ANNO)].map((m) => Number(m[1])).filter((a) => a <= annoMax());
     const max = citati.length ? Math.max(...citati) : 0;
-    if (max > d.anno + 3 && !derivata) revisione.push(`anno ${d.anno} registrato, ma il testo cita il ${max}`);
+    if (max > d.anno + 3 && !derivata) {
+      const confermato = LEGISLATIVI.has(tipoAtto) && (annoData === d.anno || schema?.anno === d.anno || testa?.data?.slice(0, 4) === String(d.anno));
+      // Data propria dell'atto (firma in fondo o protocollo in testa) coerente con
+      // gli anni citati: l'anno registrato e' smentito due volte.
+      const propria = proprieDate.find((x) => x.fonte !== "intestazione" && Number(x.data.slice(0, 4)) >= max - 1 && citati.every((a) => a <= Number(x.data.slice(0, 4)) + 1));
+      if (confermato) {
+        risolti.push(`anno ${d.anno} confermato dall'intestazione: le date successive sono modifiche citate nel testo coordinato`);
+      } else if (propria && !didattica && !discorde) {
+        const valore = Number(propria.data.slice(0, 4));
+        anno = { valore, confidenza: "media", motivo: `${propria.fonte} del ${dataLeggibile(propria.data)} (il testo cita il ${max}, impossibile nel ${d.anno})` };
+        risolti.push(`anno ${valore} dalla ${propria.fonte}: il ${d.anno} registrato è smentito dagli anni citati (${max})`);
+      } else {
+        revisione.push(`anno ${d.anno} registrato, ma il testo cita il ${max}`);
+      }
+    }
   }
 
   // 4) Titolo inservibile.
   let titolo: Proposta["titolo"] = null;
   if (titoloInservibile(d.titolo)) {
     const nuovo = titoloDiRipiego(d, schema);
+    const dalTesto = nuovo ? null : titoloDalTesto(d.testo);
     if (nuovo && nuovo !== d.titolo) titolo = { valore: nuovo, motivo: `titolo inservibile («${d.titolo.slice(0, 60)}»)` };
-    else revisione.push(`titolo inservibile («${d.titolo.slice(0, 60)}») senza un'alternativa affidabile`);
+    else if (dalTesto && dalTesto !== d.titolo) {
+      titolo = { valore: dalTesto, motivo: `titolo inservibile («${d.titolo.slice(0, 60)}»): prima intestazione del testo` };
+      risolti.push(`titolo dalla prima intestazione del testo: «${dalTesto}»`);
+    } else revisione.push(`titolo inservibile («${d.titolo.slice(0, 60)}») senza un'alternativa affidabile`);
   }
 
-  return { tipoAtto, origineTipo, numero, data, estremi: estremi(tipoAtto, numero, data), anno, titolo, revisione };
+  return { tipoAtto, origineTipo, numero, data, estremi: estremi(tipoAtto, numero, data), anno, titolo, revisione, risolti };
 }

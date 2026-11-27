@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     const r = await eseguiBonifica(getDb(), { applica, daId: Number.isFinite(da) && da > 0 ? da : undefined, budgetMs: 250_000 });
     const limite = Math.min(2000, Math.max(0, Number(sp.get("righe") ?? 300) || 0));
     return NextResponse.json(
-      { ...r, modifiche: r.modifiche.slice(0, limite), revisione: r.revisione.slice(0, limite) },
+      { ...r, modifiche: r.modifiche.slice(0, limite), revisione: r.revisione.slice(0, limite), risoluzioni: r.risoluzioni.slice(0, limite) },
       { headers: { "Cache-Control": NO_STORE } }
     );
   } catch (err) {

@@ -96,6 +96,29 @@ async function main() {
   const senzaAnno = normalizzaMetadati({ id: 9006, cartella: "00 - Sito Ade", nomeFile: "Provvedimento_26.01.2021.pdf", titolo: "Provvedimento_26.01.2021", anno: 0, testo: "PROVVEDIMENTO del 26.01.2021 Modalità di consultazione" });
   verifica(senzaAnno.anno?.valore === 2021 && senzaAnno.tipoAtto === "Provvedimento", `anno mancante recuperato dall'intestazione (${senzaAnno.anno?.motivo})`);
 
+  console.log("\n# Regole v2: ambiguità sciolte con due segnali concordi");
+  const nm = normalizzaMetadati;
+  const circE = nm({ id: 24, cartella: "01 - Chiarimenti", nomeFile: "2013 - Chiar. 12 E - Novità fiscali e disposizioni tributarie.pdf", titolo: "Circ. 12 E - Novità fiscali e disposizioni tributarie", anno: 2013, testo: "CIRCOLARE N. 12/E Direzione Centrale Normativa Roma, 3 maggio 2013 OGGETTO: Novità fiscali" });
+  verifica(circE.tipoAtto === "Circolare" && circE.revisione.length === 0 && /anche il titolo/.test(circE.risolti.join()), `#24: titolo e intestazione concordi → Circolare (${circE.estremi})`);
+  const istr = nm({ id: 861, cartella: "11 - Istruzioni", nomeFile: "2001 - Istr. 9 - Variazione di destinazione immobiliare.pdf", titolo: "Istr. 9 - Variazione di destinazione immobiliare", anno: 2001, testo: "AGENZIA DEL TERRITORIO CIRCOLARE n. 9 Roma, 26 novembre 2001 OGGETTO: Procedura DOCFA" });
+  verifica(istr.tipoAtto === "Circolare" && istr.numero === "9" && /stesso numero/.test(istr.risolti.join()), `#861: stesso numero nel nome e nell'intestazione → ${istr.estremi}`);
+  const soloCartella = nm({ id: 446, cartella: "03 - Comunicati stampa", nomeFile: "2012 - Modalità tecniche per dichiarazioni colturali.pdf", titolo: "Modalità tecniche per dichiarazioni colturali", anno: 2012, testo: "PROVVEDIMENTO del 2 marzo 2012 Modalità tecniche di presentazione delle dichiarazioni colturali" });
+  verifica(soloCartella.tipoAtto === "Provvedimento" && soloCartella.revisione.length === 0, `#446: tipologia solo dalla cartella → ${soloCartella.estremi}`);
+  const corso = nm({ id: 539, cartella: "05 - Corsi e Indicazioni", nomeFile: "2003 - Corso 49 T - Aggiornamento dei tipi catastali.pdf", titolo: "Corso 49 T - Aggiornamento dei tipi catastali", anno: 2003, testo: "CIRCOLARE n. 49/T del 12 marzo 2003 Aggiornamento dei tipi catastali" });
+  verifica(corso.tipoAtto !== "Circolare" && corso.revisione.length > 0, "#539: materiale di un corso, tipologia non toccata (resta da revisionare)");
+  const protocollo = nm({ id: 163, cartella: "02 - Circolari", nomeFile: "2009 - Circ. 589 - Istituzione e variazione punti fiduciali catastali.pdf", titolo: "Circ. 589 - Istituzione e variazione punti fiduciali catastali", anno: 2009, testo: "CIRCOLARE n. 5 del 3 marzo 2009 OGGETTO: Punti fiduciali" });
+  verifica(protocollo.numero === "5" && protocollo.revisione.length === 0 && /protocollo/.test(protocollo.risolti.join()), `#163: «Circ. 589» contro «CIRCOLARE n. 5» → n. ${protocollo.numero}`);
+  const coordinato = nm({ id: 637, cartella: "06 - Decreti Legge", nomeFile: "1993 - DL - Istituzione del catasto dei fabbricati.pdf", titolo: "Istituzione del catasto dei fabbricati", anno: 1993, testo: "DECRETO-LEGGE 30 dicembre 1993, n. 557 Ulteriori interventi correttivi di finanza pubblica. Art. 9 (testo modificato dalla legge 26 febbraio 1999, n. 1999, e dal decreto 2 gennaio 1998)" });
+  verifica(!coordinato.anno && coordinato.revisione.length === 0 && /confermato/.test(coordinato.risolti.join()), "#637: legge del 1993 in testo coordinato con modifiche del 1999: anno confermato");
+  const firmaFine = nm({ id: 74, cartella: "01 - Chiarimenti", nomeFile: "1992 - Vincolo pertinenziale aree ai fini ICI.pdf", titolo: "Vincolo pertinenziale aree ai fini ICI", anno: 1992, testo: "Oggetto: vincolo pertinenziale delle aree ai fini ICI. Con la sentenza del 2004 e la risoluzione del 2005 ...", fine: "... si resta a disposizione. Roma, 12 luglio 2005 IL DIRETTORE CENTRALE" });
+  verifica(firmaFine.anno?.valore === 2005 && /firma in fondo/.test(firmaFine.anno.motivo), `#74: anno smentito dagli anni citati, firma in fondo → ${firmaFine.anno?.valore}`);
+  const senzaFirma = nm({ id: 334, cartella: "02 - Circolari", nomeFile: "1995 - Circ. 194 - Accettazione tipo mappale con stralcio di corte.pdf", titolo: "Circ. 194 - Accettazione tipo mappale con stralcio di corte", anno: 1995, testo: "Tipo mappale con stralcio di corte: la procedura Pregeo del 2006 prevede ...", fine: "... gli uffici provvederanno." });
+  verifica(!senzaFirma.anno && senzaFirma.revisione.some((m) => /cita il 2006/.test(m)), "#334: nessuna data propria trovata: resta da revisionare (niente indovinelli)");
+  const titoloCorso = nm({ id: 573, cartella: "05 - Corsi e Indicazioni", nomeFile: "s.d. - Corso.pdf", titolo: "Corso", anno: 0, testo: "Agenzia del Territorio\nIl classamento delle unità immobiliari urbane\nModulo 2" });
+  verifica(titoloCorso.titolo?.valore === "Il classamento delle unità immobiliari urbane", `#573: titolo dalla prima intestazione del testo («${titoloCorso.titolo?.valore}»)`);
+  const titoloVuoto = nm({ id: 422, cartella: "03 - Comunicati stampa", nomeFile: "2015 - Com. 73489 - Non c'è testo da elaborare.pdf", titolo: "Com. 73489 - Non c'è testo da elaborare", anno: 2015, testo: "12 3 4" });
+  verifica(!titoloVuoto.titolo && titoloVuoto.revisione.length > 0, "#422: testo senza intestazioni utili: titolo non inventato");
+
   console.log("\n# Runner su database (prova a secco, applicazione, idempotenza)");
   const { createClient } = await import("@libsql/client");
   const db = createClient({ url: `file:${dbFile}` });
