@@ -157,9 +157,9 @@ export default async function AggiornamentiPage() {
         </h1>
         <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-body">
           Ogni settimana l&apos;archivio controlla circolari, risoluzioni e provvedimenti
-          pubblicati dall&apos;Agenzia delle Entrate, scarica quelli che riguardano il
-          catasto e la pubblicità immobiliare e li aggiunge al database (ricerca, mappa
-          degli argomenti, Studio Normativo e Normie).
+          pubblicati dall&apos;Agenzia delle Entrate, e ogni giorno la Gazzetta Ufficiale:
+          scarica gli atti che riguardano il catasto e la pubblicità immobiliare e li
+          aggiunge al database (ricerca, mappa degli argomenti, Studio Normativo e Normie).
         </p>
 
         {errore && (
@@ -200,6 +200,19 @@ export default async function AggiornamentiPage() {
                   Prossimo controllo: <span className="font-medium text-ink">{data(stato.pianificazione.prossima)}</span>
                 </p>
                 <p className="mt-1 font-mono text-[11.5px] text-mute">cron: {stato.pianificazione.cron} (UTC)</p>
+                <div className="mt-4 border-t border-hairline pt-3 text-[13px] leading-relaxed text-body">
+                  <p className="font-medium text-ink">Gazzetta Ufficiale · ogni giorno</p>
+                  {stato.quotidiani?.length ? (
+                    stato.quotidiani.map((q) => (
+                      <p key={q.fonte} className="mt-1">
+                        Ultimo controllo {data(q.controllatoIl)}: {q.letti} atti nel numero, {q.pertinenti} con termini catastali, {q.importati} importati
+                        {q.errore && <span className="block text-[12.5px] text-[#9a4a07] dark:text-[#f5b86a]">{q.errore}</span>}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="mt-1 text-mute">Primo controllo stanotte (cron giornaliero 03:17 UTC, con l&apos;indicizzazione semantica).</p>
+                  )}
+                </div>
               </div>
               <div className="rounded-ds-lg border border-hairline bg-canvas p-5 shadow-ds">
                 <h2 className="mb-2 font-mono text-[11.5px] uppercase tracking-[0.14em] text-mute">Configurazione</h2>

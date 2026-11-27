@@ -7,7 +7,7 @@
       "schedule": "0 5 * * 1"
     },
     {
-      "path": "/api/cron/indicizza",
+      "path": "/api/cron/giornaliero",
       "schedule": "17 3 * * *"
     }
   ]

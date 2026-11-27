@@ -8,7 +8,7 @@ import { indicizzaDocumenti, type EsitoIndice } from "@/lib/ai/indice";
  * aggiornato quando si arriva qui. Il lavoro vero lo fa lib/ai/indice.ts
  * (passaggi con offset su Turso, EmbeddingGemma-2, tetti di neuroni e di
  * dimensioni): se il tempo o il budget finiscono, gli atti restano in coda e
- * li riprende il cron giornaliero /api/cron/indicizza.
+ * li riprende il cron giornaliero /api/cron/giornaliero.
  *
  * `chunkTesto` resta per compatibilita' (stessa logica di
  * scripts/ingest_normie.py, unita' normative intere con overlap).

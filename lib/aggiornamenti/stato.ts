@@ -1,6 +1,7 @@
 import type { Client, Row } from "@libsql/client";
 import { getDb } from "@/lib/db";
 import { contaDocumenti, MAX_DURATA_ESECUZIONE_MS } from "./archivio";
+import { controlliQuotidiani } from "./gazzetta";
 import type {
   EsecuzioneRiepilogo,
   EsitoEsecuzione,
@@ -84,9 +85,10 @@ export async function leggiStato(): Promise<StatoAggiornamenti> {
     avvisi.push("CRON_SECRET non configurato: il cron di Vercel non può autenticarsi e l'aggiornamento non parte.");
   }
 
-  const documenti = await contaDocumenti(db);
+  const [documenti, quotidiani] = await Promise.all([contaDocumenti(db), controlliQuotidiani(db)]);
   const base: StatoAggiornamenti = {
     generatoIl: new Date().toISOString(),
+    quotidiani,
     configurazione,
     pianificazione: { cron: CRON_AGGIORNAMENTO, descrizione: DESCRIZIONE_CRON, prossima: prossimaEsecuzione() },
     documenti,

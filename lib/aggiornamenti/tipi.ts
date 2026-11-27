@@ -72,8 +72,21 @@ export interface VoceImportata {
   urlArchivio?: string | null;
 }
 
+/** Controllo giornaliero di una fonte (es. Gazzetta Ufficiale). */
+export interface ControlloQuotidiano {
+  fonte: string;
+  nome: string;
+  controllatoIl: string;
+  letti: number;
+  pertinenti: number;
+  importati: number;
+  errore: string | null;
+}
+
 export interface StatoAggiornamenti {
   generatoIl: string;
+  /** Fonti controllate ogni giorno dal cron giornaliero. */
+  quotidiani?: ControlloQuotidiano[];
   configurazione: {
     cronSecret: boolean;
     turso: boolean;
