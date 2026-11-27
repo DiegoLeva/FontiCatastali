@@ -1,13 +1,14 @@
 /**
  * Bonifica dei metadati del corpus da riga di comando (idempotente).
  *
- *   TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... \
- *     npx tsx scripts/bonifica-metadati.ts            # prova a secco + rapporto
- *   ... npx tsx scripts/bonifica-metadati.ts --applica
+ * TURSO_DATABASE_URL e TURSO_AUTH_TOKEN da .env.local o dall'ambiente:
+ *   npm run bonifica:metadati                 # prova a secco + rapporto
+ *   npm run bonifica:metadati -- --applica
  *
  * Il rapporto completo (modifiche e casi da revisionare) viene salvato in
  * bonifica-metadati-<data>.json nella cartella corrente.
  */
+import "./env-locale";
 import fs from "node:fs";
 
 async function main() {

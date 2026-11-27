@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { SiteHeader } from "@/components/SiteHeader";
 import { leggiStato } from "@/lib/aggiornamenti/stato";
 import { leggiStatoRisorse, type StatoRisorse } from "@/lib/ai/stato";
 import { StatoRisorseSezione } from "@/components/StatoRisorse";
+import { ArgomentiSeguiti } from "@/components/watchlist/ArgomentiSeguiti";
+import { VociRecenti } from "@/components/VociRecenti";
 import type { EsecuzioneRiepilogo, EsitoEsecuzione, StatoAggiornamenti } from "@/lib/aggiornamenti/tipi";
-import { docUrl } from "@/lib/docs";
 
 export const metadata: Metadata = {
   title: "Stato aggiornamenti",
@@ -178,6 +178,8 @@ export default async function AggiornamentiPage() {
               </section>
             )}
 
+            <ArgomentiSeguiti />
+
             <section className="rounded-ds-lg border border-hairline bg-canvas p-5 shadow-ds">
               <h2 className="mb-4 font-mono text-[11.5px] uppercase tracking-[0.14em] text-mute">Ultima esecuzione</h2>
               {stato.ultimaEsecuzione ? <Riepilogo e={stato.ultimaEsecuzione} /> : <p className="text-[14px] text-body">Nessuna esecuzione registrata.</p>}
@@ -213,38 +215,7 @@ export default async function AggiornamentiPage() {
 
             <section>
               <h2 className="mb-3 font-mono text-[11.5px] uppercase tracking-[0.14em] text-mute">Atti rilevati di recente</h2>
-              {stato.voci.length === 0 ? (
-                <p className="rounded-ds border border-dashed border-hairline p-5 text-center text-[13.5px] text-mute">
-                  Nessun atto catastale importato finora.
-                </p>
-              ) : (
-                <ul className="divide-y divide-hairline overflow-hidden rounded-ds-lg border border-hairline bg-canvas shadow-ds">
-                  {stato.voci.map((v) => (
-                    <li key={v.url} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        {v.docId ? (
-                          <Link href={`/documento/${v.docId}`} className="line-clamp-2 text-[13.5px] font-medium text-ink hover:text-link">
-                            {v.titolo}
-                          </Link>
-                        ) : (
-                          <a href={docUrl(v.cartella, v.url)} target="_blank" rel="noopener noreferrer" className="line-clamp-2 text-[13.5px] font-medium text-ink hover:text-link">
-                            {v.titolo}
-                          </a>
-                        )}
-                        <span className="text-[12px] text-mute">
-                          {v.cartella || v.fonte} · {v.data ? data(v.data, false) : v.anno ?? "s.d."}
-                          {v.motivo ? ` · ${v.motivo}` : ""}
-                        </span>
-                      </span>
-                      <span className={`self-start rounded-full border px-2 py-0.5 text-[11px] font-medium sm:self-center ${
-                        v.stato === "importato" ? TONI.ok : v.stato === "errore" ? TONI.ko : TONI.neutro
-                      }`}>
-                        {v.stato}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <VociRecenti voci={stato.voci} />
             </section>
 
             <section>

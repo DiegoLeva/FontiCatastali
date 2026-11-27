@@ -59,6 +59,9 @@ const DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_agg_voci_stato ON aggiornamenti_voci(stato)`,
   `CREATE INDEX IF NOT EXISTS idx_agg_voci_chiave ON aggiornamenti_voci(chiave)`,
+  // Scansioni fallite prima della coda OCR: passano in "needs_ocr" (idempotente).
+  `UPDATE aggiornamenti_voci SET stato = 'needs_ocr', motivo = 'PDF scansionato senza testo: in coda per l''OCR locale (scripts/ocr-locale.ts)'
+   WHERE stato = 'errore' AND motivo LIKE '%serve OCR%'`,
 ];
 
 let schemaPronto: Promise<void> | null = null;

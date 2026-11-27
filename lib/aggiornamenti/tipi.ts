@@ -18,7 +18,8 @@ export type StatoVoce =
   | "importato"
   | "duplicato" // gia' presente nel corpus (stesso tipo/numero/anno)
   | "non_pertinente" // non riguarda catasto / pubblicita' immobiliare
-  | "errore"; // download o estrazione non riusciti (ritentato)
+  | "errore" // download o estrazione non riusciti (ritentato)
+  | "needs_ocr"; // PDF scansionato senza testo: in coda per l'OCR locale (scripts/ocr-locale.ts)
 
 export interface StatoFonte {
   id: string;
@@ -67,6 +68,8 @@ export interface VoceImportata {
   motivo: string | null;
   semantico: string | null;
   importatoIl: string | null;
+  /** Copia d'archivio su R2, se attiva. */
+  urlArchivio?: string | null;
 }
 
 export interface StatoAggiornamenti {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { getDb } from "@/lib/db";
+import { archivioDi } from "@/lib/aggiornamenti/r2";
 import { docUrl, fmtAnno, isImportatoWeb } from "@/lib/docs";
 import { SiteHeader } from "@/components/SiteHeader";
 import { EvidenziaDocumento } from "@/components/EvidenziaDocumento";
@@ -95,6 +96,8 @@ function paragrafi(testo: string): string[] {
 export default async function DocumentoPage({ params }: { params: { id: string } }) {
   const d = await carica(Number(params.id));
   if (!d) notFound();
+  // Copia d'archivio su R2 (atti importati dal cron): ripiego se l'AdE sposta il PDF.
+  const archivio = isImportatoWeb(d.nomeFile) ? await archivioDi(getDb(), Number(params.id)) : null;
   const blocchi = paragrafi(d.testo);
   const troncato = d.lunghezza > MAX_CARATTERI;
 
@@ -118,6 +121,16 @@ export default async function DocumentoPage({ params }: { params: { id: string }
             >
               Apri il PDF originale <ExternalIcon className="h-3.5 w-3.5" />
             </a>
+            {archivio?.urlPubblico && (
+              <a
+                href={archivio.urlPubblico}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-ds border border-hairline bg-canvas px-3.5 py-2 text-[13.5px] font-medium text-ink transition hover:bg-canvas-soft"
+              >
+                Copia d&apos;archivio <ExternalIcon className="h-3.5 w-3.5" />
+              </a>
+            )}
             <Link
               href={`/studio?argomento=${encodeURIComponent(d.titolo.replace(/^[A-Za-zà-ù.]+\s*\d*\s*-\s*/, "").slice(0, 80))}`}
               className="inline-flex items-center gap-2 rounded-ds border border-hairline bg-canvas px-3.5 py-2 text-[13.5px] font-medium text-ink transition hover:bg-canvas-soft"

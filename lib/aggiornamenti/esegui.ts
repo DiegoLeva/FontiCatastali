@@ -2,6 +2,8 @@ import type { Client } from "@libsql/client";
 import { conServizioAi } from "@/lib/ai/budget";
 import { assicuraSchemaMetadati, eseguiBonifica } from "@/lib/metadati/bonifica";
 import { REVISIONE_REGOLE } from "@/lib/metadati/normalizza";
+import { confrontaNuoviAtti, type EsitoWatchlist } from "@/lib/watchlist/server";
+import { archiviaPdf, r2Configurato } from "./r2";
 import { getDb } from "@/lib/db";
 import { chat } from "@/lib/cloudflare";
 import { FONTI, parseElenco, scaricaElenco, type FonteConfig, type VoceFonte } from "./fonti";
@@ -77,6 +79,12 @@ export interface RapportoEsecuzione {
   metadatiNormalizzati: number;
   /** Id dei documenti importati in questa esecuzione (watchlist, dossier). */
   idImportati: number[];
+  /** Argomenti seguiti e dossier in cache toccati dai nuovi atti. */
+  watchlist?: EsitoWatchlist;
+  /** PDF scansionati messi in coda per l'OCR locale. */
+  daOcr: number;
+  /** PDF copiati nell'archivio R2. */
+  archiviati: number;
   voci: EsitoVoceRapporto[];
   dettagliErrori: string[];
 }
@@ -93,7 +101,7 @@ const TIPO_CRON: Record<string, string> = { circolare: "Circolare", risoluzione:
 const SYSTEM_TITOLI =
   "Sei un archivista esperto di normativa e prassi catastale italiana. Assegni a ogni documento un oggetto sintetico e preciso.";
 
-function oggettoDiRipiego(oggetto: string): string {
+export function oggettoDiRipiego(oggetto: string): string {
   const pulito = oggetto
     .replace(/^(?:oggetto\s*:\s*)/i, "")
     .replace(/[\\/:*?"<>|]/g, " ")
@@ -113,7 +121,7 @@ function oggettoDiRipiego(oggetto: string): string {
  * (scripts/genera_nomi_normie.py), con ripiego deterministico sull'oggetto
  * ufficiale se il modello non risponde o produce qualcosa di inservibile.
  */
-async function oggettoConciso(oggettoUfficiale: string, testo: string): Promise<string> {
+export async function oggettoConciso(oggettoUfficiale: string, testo: string): Promise<string> {
   const ripiego = oggettoDiRipiego(oggettoUfficiale);
   if (!process.env.CF_ACCOUNT_ID || !process.env.CF_API_TOKEN) return ripiego;
   try {
@@ -150,7 +158,7 @@ async function oggettoConciso(oggettoUfficiale: string, testo: string): Promise<
 /* Esecuzione                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function chiaveAtto(tipo: string, numero: string | null, anno: number | null, data: string | null): string | null {
+export function chiaveAtto(tipo: string, numero: string | null, anno: number | null, data: string | null): string | null {
   if (numero && anno) return `${tipo}:${numero}:${anno}`;
   if (data) return `${tipo}:del:${data}`;
   return null;
@@ -209,6 +217,8 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
     ripristinati: 0,
     indicizzati: 0,
     metadatiNormalizzati: 0,
+    daOcr: 0,
+    archiviati: 0,
     idImportati: [],
     voci: [],
     dettagliErrori: [],
@@ -314,11 +324,35 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
 
       // PDF: download ed estrazione del testo.
       let estratto;
+      let pdf: Uint8Array | null = null;
       try {
-        estratto = await estraiTesto(await scaricaPdf(v.urlDownload));
+        pdf = await scaricaPdf(v.urlDownload);
+        estratto = await estraiTesto(pdf);
       } catch (err) {
         const motivo = (err as Error).message;
         const ritentabile = err instanceof ErrorePdf ? err.ritentabile : true;
+        // Scansione senza testo: niente OCR a pagamento. L'atto resta in coda
+        // ("needs_ocr", visibile su /aggiornamenti) per lo script OCR locale e,
+        // se R2 e' attivo, il PDF viene archiviato per non perderlo.
+        if (pdf && err instanceof ErrorePdf && !err.ritentabile && /OCR/i.test(motivo)) {
+          rapporto.daOcr++;
+          const motivoOcr = "PDF scansionato senza testo: in coda per l'OCR locale (scripts/ocr-locale.ts)";
+          rapporto.voci.push({ ...base, esito: "needs_ocr", motivo: motivoOcr });
+          if (!prova) {
+            await registraVoce(db, {
+              ...base, tipo: v.tipo, numero: v.numero, data: v.data, anno: v.anno,
+              chiave: chiaveAtto(v.tipo, v.numero, v.anno, v.data),
+              stato: "needs_ocr", motivo: motivoOcr, titolo: v.oggetto || v.titoloFonte, cartella: fonte.cartella,
+            });
+            await db.execute({ sql: `UPDATE aggiornamenti_voci SET tentativi = ? WHERE url = ?`, args: [MAX_TENTATIVI, v.url] });
+            if (r2Configurato()) {
+              const a = await archiviaPdf(db, { url: v.url, pdf, anno: v.anno, nome: `${fonte.abbrev}${v.numero ? ` ${v.numero}` : ""} - ${v.oggetto || v.titoloFonte}`, stato: "needs_ocr" });
+              if (a.ok) rapporto.archiviati++;
+              else if (a.motivo) rapporto.dettagliErrori.push(`archivio di "${v.titoloFonte}": ${a.motivo}`);
+            }
+          }
+          continue;
+        }
         rapporto.errori++;
         rapporto.dettagliErrori.push(`${v.titoloFonte}: ${motivo}`);
         rapporto.voci.push({ ...base, esito: "errore", motivo });
@@ -407,6 +441,11 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
         });
         rapporto.importati++;
         rapporto.idImportati.push(docId);
+        if (pdf && r2Configurato()) {
+          const a = await archiviaPdf(db, { url: v.url, pdf, sha256: estratto.sha256, anno, nome: titolo, docId, stato: "importato" });
+          if (a.ok) rapporto.archiviati++;
+          else if (a.motivo) rapporto.dettagliErrori.push(`archivio di "${titolo}": ${a.motivo}`);
+        }
         notiCron.set(docId, { tipo: TIPO_CRON[v.tipo], numero, data: v.data });
         await registraVoce(db, {
           ...base, tipo: v.tipo, numero, data: v.data, anno, chiave,
@@ -475,7 +514,17 @@ async function eseguiAggiornamentoCron(opts: OpzioniEsecuzione): Promise<Rapport
       }
     }
 
-    // 8) Esito complessivo.
+    // 8) Argomenti seguiti (watchlist) e dossier dello Studio in cache: i
+    //    nuovi atti pertinenti vengono segnalati (badge, pagina, webhook).
+    if (!prova && rapporto.idImportati.length) {
+      try {
+        rapporto.watchlist = await confrontaNuoviAtti(db, rapporto.idImportati);
+      } catch (err) {
+        rapporto.dettagliErrori.push(`confronto con gli argomenti seguiti: ${(err as Error).message}`);
+      }
+    }
+
+    // 9) Esito complessivo.
     const fontiOk = rapporto.fonti.filter((f) => f.ok).length;
     const fontiKo = rapporto.fonti.length - fontiOk;
     if (fontiOk === 0) rapporto.esito = "errore";
@@ -537,6 +586,13 @@ function componiMessaggio(r: RapportoEsecuzione, fontiOk: number): string {
   if (r.duplicati) parti.push(`${atti(r.duplicati)} già nel corpus.`);
   if (r.ripristinati) parti.push(`Ripristinati ${atti(r.ripristinati)} importati in precedenza e spariti dal corpus.`);
   if (r.errori) parti.push(`${r.errori} ${r.errori === 1 ? "errore" : "errori"} (ritentati alla prossima esecuzione).`);
+  if (r.daOcr) parti.push(`${atti(r.daOcr)} ${r.daOcr === 1 ? "scansionato" : "scansionati"} in coda per l'OCR locale (npm run ocr:locale).`);
+  if (r.archiviati) parti.push(`${r.archiviati} PDF ${r.archiviati === 1 ? "archiviato" : "archiviati"} su R2.`);
+  if (r.metadatiNormalizzati) parti.push(`Metadati normalizzati: ${atti(r.metadatiNormalizzati)}.`);
+  const seguiti = r.watchlist?.argomenti.length ?? 0;
+  if (seguiti) parti.push(`Novità per ${seguiti} ${seguiti === 1 ? "argomento seguito" : "argomenti seguiti"}.`);
+  const dossier = r.watchlist?.dossierSegnalati.length ?? 0;
+  if (dossier) parti.push(`${dossier} ${dossier === 1 ? "dossier dello Studio segnalato" : "dossier dello Studio segnalati"} per la rigenerazione.`);
   const ko = r.fonti.filter((f) => !f.ok);
   if (ko.length) parti.push(`Fonti con problemi: ${ko.map((f) => `${f.nome} (${f.errore ?? "errore"})`).join("; ")}.`);
   return parti.join(" ");
@@ -549,14 +605,22 @@ function componiMessaggio(r: RapportoEsecuzione, fontiOk: number): string {
 export async function notifica(r: RapportoEsecuzione): Promise<void> {
   const url = process.env.AGGIORNAMENTI_WEBHOOK_URL;
   if (!url || r.prova) return;
-  if (r.importati === 0 && (r.esito === "ok" || r.esito === "nessuna_novita" || r.esito === "saltata")) return;
+  if (r.importati === 0 && r.daOcr === 0 && (r.esito === "ok" || r.esito === "nessuna_novita" || r.esito === "saltata")) return;
   const titoli = r.voci.filter((v) => v.esito === "importato").map((v) => `• ${v.titolo}`).join("\n");
-  const testo = `FontiCatastali — aggiornamento ${r.esito.toUpperCase()}\n${r.messaggio}${titoli ? `\n${titoli}` : ""}\nhttps://fonti-catastali.vercel.app/aggiornamenti`;
+  const seguiti = (r.watchlist?.argomenti ?? [])
+    .map((a) => `★ ${a.argomento} (${a.atti.length} ${a.atti.length === 1 ? "atto" : "atti"}): ${a.atti.map((x) => x.titolo).join("; ")}`)
+    .join("\n");
+  const dossier = (r.watchlist?.dossierSegnalati ?? []).map((d) => d.argomento).join(", ");
+  const testo =
+    `FontiCatastali — aggiornamento ${r.esito.toUpperCase()}\n${r.messaggio}${titoli ? `\n${titoli}` : ""}` +
+    `${seguiti ? `\nNovità sugli argomenti seguiti:\n${seguiti}` : ""}` +
+    `${dossier ? `\nDossier dello Studio da rigenerare: ${dossier}` : ""}` +
+    `\nhttps://fonti-catastali.vercel.app/aggiornamenti`;
   try {
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: testo, content: testo.slice(0, 1900) }),
+      body: JSON.stringify({ text: testo, content: testo.slice(0, 1900), argomenti: r.watchlist?.argomenti ?? [], dossier: r.watchlist?.dossierSegnalati ?? [] }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err) {

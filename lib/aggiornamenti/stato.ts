@@ -108,13 +108,16 @@ export async function leggiStato(): Promise<StatoAggiornamenti> {
       `SELECT ${COLONNE_ESEC}, dettagli FROM aggiornamenti_esecuzioni
        WHERE esito IN ('ok', 'nessuna_novita') ORDER BY id DESC LIMIT 1`
     ),
-    db.execute(
-      `SELECT url, fonte, tipo, numero, data, anno, COALESCE(titolo, titolo_fonte) AS titolo, cartella,
-              doc_id, stato, motivo, semantico, importato_il
-       FROM aggiornamenti_voci
-       WHERE stato IN ('importato', 'errore', 'duplicato')
-       ORDER BY COALESCE(importato_il, aggiornato_il) DESC LIMIT 30`
-    ),
+    (async () => {
+      const archivio = (await db.execute(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archivio_pdf'`)).rows.length > 0;
+      return db.execute(
+        `SELECT v.url, v.fonte, v.tipo, v.numero, v.data, v.anno, COALESCE(v.titolo, v.titolo_fonte) AS titolo, v.cartella,
+                v.doc_id, v.stato, v.motivo, v.semantico, v.importato_il${archivio ? ", a.url_pubblico AS archivio" : ""}
+         FROM aggiornamenti_voci v ${archivio ? "LEFT JOIN archivio_pdf a ON a.url = v.url" : ""}
+         WHERE v.stato IN ('importato', 'errore', 'duplicato', 'needs_ocr')
+         ORDER BY COALESCE(v.importato_il, v.aggiornato_il) DESC LIMIT 60`
+      );
+    })(),
   ]);
 
   base.esecuzioni = esec.rows.map((r, i) => riga(r, i === 0));
@@ -135,8 +138,13 @@ export async function leggiStato(): Promise<StatoAggiornamenti> {
       motivo: r.motivo == null ? null : String(r.motivo),
       semantico: r.semantico == null ? null : String(r.semantico),
       importatoIl: r.importato_il == null ? null : String(r.importato_il),
+      urlArchivio: r.archivio == null ? null : String(r.archivio),
     })
   );
+  const daOcr = base.voci.filter((v) => v.stato === "needs_ocr").length;
+  if (daOcr) {
+    avvisi.push(`${daOcr} ${daOcr === 1 ? "atto scansionato attende" : "atti scansionati attendono"} l'OCR (gratuito, dal tuo PC): npm run ocr:locale. Elenco filtrabile qui sotto.`);
+  }
 
   const ultima = base.ultimaEsecuzione;
   if (!ultima) {

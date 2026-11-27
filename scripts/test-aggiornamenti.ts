@@ -75,6 +75,9 @@ const PDF_DUPLICATO = pdfConTesto([
   "Stima diretta delle unita immobiliari censite nel catasto dei fabbricati in categoria D/1.",
 ]);
 
+// Scansione: pagina senza testo selezionabile -> coda OCR locale, non errore.
+const PDF_SCANSIONE = pdfConTesto([]);
+
 /* ------------------------------ HTML elenchi ------------------------------ */
 const blocco = (titolo: string, strong: string, href: string, oggetto: string) => `
 <div class="journal-content-article " data-analytics-asset-id="1" data-analytics-asset-title="${titolo}" data-analytics-asset-type="web-content">
@@ -92,6 +95,7 @@ const HTML: Record<string, string> = {
     ${blocco("Risoluzione n. 46 del 23 novembre 2026", "Risoluzione n. 46 del 23/11/2026", "/portale/documents/20143/3/RIS_46.pdf/ddd?t=4", "Istituzione dei codici tributo per il versamento anticipato delle ritenute sui dividendi degli immobili")}
     ${blocco("Risoluzione n. 45 del 13 novembre 2026", "Risoluzione n. 45 del 13/11/2026", "/portale/documents/20143/3/RIS_45.pdf/eee?t=5", "Codici tributo")}
     ${blocco("Risoluzione n. 44 del 10 novembre 2026", "Risoluzione n. 44 del 10/11/2026", "/portale/documents/20143/3/RIS_44.pdf/fff?t=6", "Codici tributo IVA")}
+    ${blocco("Risoluzione n. 43 del 3 novembre 2026", "Risoluzione n. 43 del 03/11/2026", "/portale/documents/20143/3/RIS_43_scan.pdf/sca?t=11", "Classamento catastale delle unit&agrave; immobiliari e voltura catastale")}
   </body></html>`,
   provvedimenti: `<html><body>
     <div class="journal-content-article " data-analytics-asset-title="Ultimi Provvedimenti del Direttore soggetti a pubblicit&amp;agrave; legale"><p><strong>Ultimo aggiornamento: 26 novembre 2026</strong></p><p><a href="/portale/documents/20143/296042/Comma+361+doc_comma_361.doc/9e48">(articolo 1, comma 361, della Legge 24 dicembre 2007 n° 244)</a></p></div>
@@ -107,6 +111,7 @@ const PDF: Record<string, Uint8Array> = {
   "Provv_catasto.pdf": PDF_CATASTO,
   "RIS_46.pdf": PDF_FISCALE,
   "Circolare+n.+27.pdf": PDF_DUPLICATO,
+  "RIS_43_scan.pdf": PDF_SCANSIONE,
 };
 
 const fetchOriginale = globalThis.fetch;
@@ -198,6 +203,7 @@ async function main() {
   verifica(r.duplicati === 1, `circolare 27/2023 riconosciuta come duplicato (duplicati: ${r.duplicati})`);
   verifica(r.scartati >= 4, `atti fiscali scartati (scartati: ${r.scartati})`);
   verifica(r.esito === "parziale", "esito parziale: una fonte con struttura cambiata non passa sotto silenzio");
+  verifica(r.daOcr === 1 && r.errori === 0, `PDF scansionato in coda OCR, non contato come errore (daOcr: ${r.daOcr}, errori: ${r.errori})`);
   const imp = r.voci.find((v) => v.esito === "importato");
   verifica(imp?.titolo === "Prov. 412345 - " + imp?.titolo?.split(" - ").slice(1).join(" - "), `titolo col protocollo (${imp?.titolo})`);
 
@@ -225,6 +231,7 @@ async function main() {
   const s = await leggiStato();
   verifica(s.esecuzioni.length === 3, `3 esecuzioni registrate (${s.esecuzioni.length})`);
   verifica(s.voci.some((v) => v.stato === "importato"), "atto importato elencato");
+  verifica(s.voci.some((v) => v.stato === "needs_ocr") && s.avvisi.some((a) => /ocr:locale/.test(a)), "atto scansionato elencato «da OCR» con l'istruzione");
   verifica(s.avvisi.some((a) => /parziale|Normie/.test(a)), "avvisi presenti (fonte cambiata / Normie)");
   const b = await leggiStatoBreve();
   verifica(b.importatiUltimi30gg === 1 && b.documenti === 2, `stato breve coerente (${JSON.stringify(b)})`);
