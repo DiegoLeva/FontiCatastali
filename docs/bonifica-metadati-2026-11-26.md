@@ -363,3 +363,187 @@ Segnalati e NON modificati: servono un controllo a mano sul PDF.
 | #2567 | 00 - Sito Ade | 1992 | Decreto legislativo 546 31121992_decreto legislativo 546_199 | anno 1992 registrato, ma il testo cita il 2008 |
 | #2578 | 00 - Sito Ade | 1972 | Articolo 4 del DPR 26 ottobre 1972, n. 650 | anno 1972 registrato, ma il testo cita il 1996 |
 | #2584 | 00 - Sito Ade | 1997 | Dl 472 18121997 - art13_19971218_DecretoLegislativo_472_Art. | anno 1997 registrato, ma il testo cita il 2011 |
+
+## Seconda passata — regole v2 (27 novembre 2026)
+
+Esecuzione reale n. 9 sul database di produzione, dopo due prove a secco riviste a mano (la prima proponeva come titolo una riga di rumore OCR e segnalava 7 falsi casi nuovi: regole corrette prima di applicare). Nessuna chiamata AI: solo analisi deterministica di intestazioni, firme, protocolli, numeri e titoli. Ogni regola scioglie un caso **solo con due segnali concordi**; la terza esecuzione (n. 10, prova a secco) non trova nulla da cambiare.
+
+| Voce | Valore |
+|---|---|
+| Casi da revisionare prima della seconda passata | 198 |
+| **Risolti** | **70** |
+| Ancora da controllare a mano | 128 |
+| di cui con una parte sciolta (es. anno corretto, tipologia ancora ambigua) | 4 |
+| Anni corretti in `documenti` | 10 |
+| Tipologie ricavate dal testo (totale corpus) | 581 (erano 557) |
+| Documenti con data dell'atto (totale corpus) | 688 (erano 675) |
+
+### Casi risolti per regola
+
+| Regola | Casi |
+|---|---|
+| Anno di leggi e decreti confermato (testo coordinato con modifiche successive) | 36 |
+| Tipologia dall'intestazione confermata da titolo, numero o cartella | 24 |
+| Numero dall'intestazione (quello del nome è un protocollo o ha l'anno attaccato) | 5 |
+| Anno corretto da firma in fondo o protocollo | 5 |
+
+### Anni corretti
+
+| Doc | Prima | Dopo | Motivo |
+|---|---|---|---|
+| #277 | 2001 | 2006 | firma in fondo del 23 febbraio 2006 (il testo cita il 2006, impossibile nel 2001) |
+| #407 | 1972 | 2007 | firma in fondo del 30 maggio 2007 (il testo cita il 2007, impossibile nel 1972) |
+| #408 | 1972 | 2008 | firma in fondo del 14 febbraio 2008 (il testo cita il 2008, impossibile nel 1972) |
+| #410 | 1969 | 2009 | firma in fondo del 1 ottobre 2009 (il testo cita il 2009, impossibile nel 1969) |
+| #686 | 1990 | 2004 | firma in fondo del 27 settembre 2004 (il testo cita il 2004, impossibile nel 1990) |
+| #1068 | 1998 | 2006 | protocollo del 9 marzo 2006 (il testo cita il 2006, impossibile nel 1998) |
+| #1162 | 2005 | 2015 | firma in fondo del 11 marzo 2015 (il testo cita il 2015, impossibile nel 2005) |
+| #1172 | 1985 | 2014 | firma in fondo del 17 dicembre 2014 (il testo cita il 2014, impossibile nel 1985) |
+| #1219 | 2000 | 2002 | intestazione: Circolare n. 2 del 17 aprile 2002 |
+| #1697 | 1948 | 1961 | firma in fondo del 13 dicembre 1961 (il testo cita il 1961, impossibile nel 1948) |
+
+### Restano da controllare a mano
+
+Motivi (un caso può averne più di uno):
+
+| Motivo | Casi |
+|---|---|
+| Il testo si apre con un altro tipo di atto, senza un secondo segnale | 56 |
+| Il testo cita anni successivi, nessuna data propria trovata | 50 |
+| Numero del nome diverso da quello dell'intestazione | 12 |
+| Data nel testo diversa dall'anno registrato | 7 |
+| Titolo inservibile senza alternativa affidabile | 7 |
+
+Per questi casi le regole non trovano due segnali concordi: correggerli vorrebbe dire indovinare. L'elenco aggiornato si ottiene con `GET /api/manutenzione/metadati?righe=400` (campo `revisione`) o con `npm run bonifica:metadati` (file JSON).
+
+
+| Doc | Cartella | Anno | Titolo | Motivi |
+|---|---|---|---|---|
+| #58 | 01 - Chiarimenti | 2004 | Chiar. 8304 - Chiarimenti su Pregeo 8 a regime operativo | anno 2004 registrato, ma il testo cita il 2008 |
+| #74 | 01 - Chiarimenti | 1992 | Vincolo pertinenziale aree ai fini ICI | anno 1992 registrato, ma il testo cita il 2005 |
+| #77 | 01 - Chiarimenti | 1972 | Cancellazione vincoli enfiteutici da atti catastali | anno 1972 registrato, ma il testo cita il 2011 |
+| #131 | 02 - Circolari | 2011 | Circ. 3 - Aggiornamento del Catasto Terreni automatico | il nome indica il n. 3, l'intestazione il n. 2 |
+| #187 | 02 - Circolari | 2007 | Circ. 3 - Istruzioni per compilazione comunicazioni telemati | il nome indica il n. 3, l'intestazione il n. 2/2008; anno 2007 registrato, ma il testo è datato 20 febbraio 2008 |
+| #228 | 02 - Circolari | 2005 | Circ. 22 - Trasmissione telematica modello unico catastale | il testo si apre come Provvedimento, ma la scheda indica Circolare |
+| #277 | 02 - Circolari | 2001 | Circ. 23 - Aggiornamento geometrico del catasto | il testo si apre come Provvedimento, ma la scheda indica Circolare |
+| #334 | 02 - Circolari | 1995 | Circ. 194 - Accettazione tipo mappale con stralcio di corte | anno 1995 registrato, ma il testo cita il 2006 |
+| #336 | 02 - Circolari | 1994 | Circ. 1898 - Classamento discariche rifiuti solidi urbani | anno 1994 registrato, ma il testo cita il 2006 |
+| #340 | 02 - Circolari | 1993 | Circ. 2 - Attivazione procedure Pregeo 7.00 | anno 1993 registrato, ma il testo cita il 1998 |
+| #341 | 02 - Circolari | 1993 | Circ. 212 - Cancellazione annotazione ruralità immobili abit | anno 1993 registrato, ma il testo cita il 2012 |
+| #355 | 02 - Circolari | 1991 | Circ. 4 - Revisione catasto edilizio urbano | anno 1991 registrato, ma il testo cita il 1995 |
+| #376 | 02 - Circolari | 1988 | Circ. 112 - Attribuzione rendita catastale immobili | il testo si apre come Legge n. 70, ma la scheda indica Circolare; anno 1988 registrato, ma il testo cita il 1997 |
+| #377 | 02 - Circolari | 1988 | Circ. 11 - Disposizioni integrative sulla normativa catastal | anno 1988 registrato, ma il testo cita il 1998 |
+| #391 | 02 - Circolari | 1985 | Circ. 2 - Integrazioni procedurali per adempimenti catastali | il nome indica il n. 2, l'intestazione il n. 15 |
+| #399 | 02 - Circolari | 1975 | Circ. 3 - Iscrizione aree scoperte in catasto | il testo si apre come D.P.R. n. 650, ma la scheda indica Circolare |
+| #401 | 02 - Circolari | 1973 | Circ. 3 - Estinzione anticipata del finanziamento ipotecario | anno 1973 registrato, ma il testo cita il 2001 |
+| #402 | 02 - Circolari | 1973 | Circ. 8 - Applicazione art 15 del D.P.R. 601 | anno 1973 registrato, ma il testo cita il 2002 |
+| #407 | 02 - Circolari | 1972 | Circ. 30 - Estensione servizio trasmissione telematica catas | il testo si apre come Provvedimento, ma la scheda indica Circolare |
+| #408 | 02 - Circolari | 1972 | Circ. 14 - Estensione servizio trasmissione telematica catas | il testo si apre come Provvedimento, ma la scheda indica Circolare |
+| #410 | 02 - Circolari | 1969 | Circ. 51597 - Procedura Pregeo per aggiornamento geometrico  | il testo si apre come Provvedimento, ma la scheda indica Circolare |
+| #413 | 02 - Circolari | 1942 | Circ. 60 - Quadro generale delle categorie catastali | il testo si apre come Legge, ma la scheda indica Circolare |
+| #414 | 02 - Circolari | 1941 | Circ. 134 - Quadro generale delle categorie catastali | il testo si apre come Legge, ma la scheda indica Circolare |
+| #415 | 02 - Circolari | 1939 | Formazione delle mappe catastali | anno 1939 registrato, ma il testo cita il 1970 |
+| #422 | 03 - Comunicati stampa | 2015 | Com. 73489 - Non c'è testo da elaborare | titolo inservibile («Com. 73489 - Non c'è testo da elaborare») senza un'alternativa affidabile |
+| #446 | 03 - Comunicati stampa | 2012 | Modalità tecniche per dichiarazioni colturali | il testo si apre come Provvedimento, ma la scheda indica Comunicato stampa |
+| #456 | 03 - Comunicati stampa | 2008 | Fruizione dati conservatorie da parte dei Comuni | il testo si apre come Provvedimento, ma la scheda indica Comunicato stampa |
+| #462 | 03 - Comunicati stampa | 2006 | Com. 4090 - Accatastamento unità immobiliari urbane | il testo si apre come Circolare n. 3/2006, ma la scheda indica Comunicato stampa |
+| #539 | 05 - Corsi e Indicazio | 2003 | Corso 49 T - Aggiornamento dei tipi catastali | il testo si apre come Circolare n. 49/T, ma la scheda indica Materiale didattico |
+| #553 | 05 - Corsi e Indicazio | 1988 | Corso 2 - Aggiornamento cartografico catastale numerico | il testo si apre come Circolare n. 2/1988, ma la scheda indica Materiale didattico |
+| #573 | 05 - Corsi e Indicazio | s.d. | Corso | titolo inservibile («Corso») senza un'alternativa affidabile |
+| #575 | 05 - Corsi e Indicazio | s.d. | Non è possibile estrarre informazioni utili dal testo fornit | titolo inservibile («Non è possibile estrarre informazioni utili dal testo fornit») senza un'alternativa affidabile |
+| #576 | 05 - Corsi e Indicazio | s.d. | Corso | titolo inservibile («Corso») senza un'alternativa affidabile |
+| #582 | 05 - Corsi e Indicazio | s.d. | Non è possibile estrarre un oggetto significativo da questo  | titolo inservibile («Non è possibile estrarre un oggetto significativo da questo ») senza un'alternativa affidabile |
+| #583 | 05 - Corsi e Indicazio | s.d. | Non è possibile estrarre un oggetto significativo da questo  | titolo inservibile («Non è possibile estrarre un oggetto significativo da questo ») senza un'alternativa affidabile |
+| #675 | 07 - Demanio | 2002 | Individuazione beni immobili di proprietà statale | il testo si apre come Decreto, ma la scheda indica Documento demaniale |
+| #676 | 07 - Demanio | 2002 | Individuazione beni immobili di proprietà statale | il testo si apre come Decreto, ma la scheda indica Documento demaniale |
+| #677 | 07 - Demanio | 2002 | Individuazione beni immobili di proprietà statale | il testo si apre come Decreto, ma la scheda indica Documento demaniale |
+| #705 | 09 - Direttive | 2008 | Dir. 2025 - Modifica servizio accettazione Punti Fiduciali | anno 2008 registrato, ma il testo cita il 2025 |
+| #711 | 09 - Direttive | 2007 | Dir. 3134 - Unificazione particelle divise in porzioni | il testo si apre come Circolare n. 1, ma la scheda indica Direttiva |
+| #721 | 09 - Direttive | 2001 | Dir. 02 - Presentazione unità immobiliari con destinazione s | anno 2001 registrato, ma il testo è datato 2 dicembre 2002 |
+| #844 | 11 - Istruzioni | 2004 | Detrazione per gli inquilini | anno 2004 registrato, ma il testo cita il 2014 |
+| #882 | 11 - Istruzioni | 1998 | Contenuti della cartografia catastale | anno 1998 registrato, ma il testo cita il 2003 |
+| #884 | 11 - Istruzioni | 1998 | Revisione classamento immobili urbani privati | anno 1998 registrato, ma il testo cita il 2013 |
+| #885 | 11 - Istruzioni | 1997 | Causali di rifiuto pratiche Docfa | anno 1997 registrato, ma il testo cita il 2010 |
+| #887 | 11 - Istruzioni | 1992 | Imposte su immobili ereditati e donati | anno 1992 registrato, ma il testo cita il 2014 |
+| #890 | 11 - Istruzioni | 1970 | Stazione di servizio con fabbricati | anno 1970 registrato, ma il testo cita il 2018 |
+| #905 | 11 - Istruzioni | 1949 | Conservazione del nuovo catasto terreni | il testo si apre come Decreto, ma la scheda indica Istruzione |
+| #907 | 11 - Istruzioni | 1943 | Lettura della carta topografica | anno 1943 registrato, ma il testo cita il 2011 |
+| #910 | 11 - Istruzioni | 1942 | Rappresentazione cartografica dei fabbricati | anno 1942 registrato, ma il testo cita il 2010 |
+| #914 | 11 - Istruzioni | 1931 | Rappresentazione cartografica delle acque | anno 1931 registrato, ma il testo cita il 1960 |
+| #929 | 12 - Leggi | 2010 | Mediazione per controversie civili e commerciali | il testo si apre come Decreto legislativo n. 28, ma la scheda indica Legge |
+| #930 | 12 - Leggi | 2005 | Legge 25 - Non è possibile estrarre un oggetto significativo | titolo inservibile («Legge 25 - Non è possibile estrarre un oggetto significativo») senza un'alternativa affidabile |
+| #954 | 13 - Linee Guida | 2005 | Aggiornamento del valore medio di mercato | il testo si apre come Provvedimento, ma la scheda indica Linee guida |
+| #1058 | 17 - Note | 2004 | Nota 64538 - Chiarimenti su Pregeo 8 a regime operativo | anno 2004 registrato, ma il testo cita il 2008 |
+| #1088 | 18 - Procedure Operati | 2007 | PO 16671 - Aggiornamento archivi cartografici e censuari cat | anno 2007 registrato, ma il testo è datato 28 febbraio 2008 |
+| #1089 | 18 - Procedure Operati | 2007 | PO 20 - Estensione servizio trasmissione telematica catastal | il testo si apre come Provvedimento, ma la scheda indica Procedura operativa |
+| #1102 | 18 - Procedure Operati | 2004 | PO 25277 - Aggiornamento catasto terreni con procedure infor | anno 2004 registrato, ma il testo è datato 21 marzo 2003 |
+| #1108 | 18 - Procedure Operati | 2003 | Richiesta estratto di mappa catastale | anno 2003 registrato, ma il testo cita il 2010 |
+| #1111 | 18 - Procedure Operati | 1990 | Legge 241 - Pubblicazione Gazzetta Ufficiale | anno 1990 registrato, ma il testo cita il 2004 |
+| #1112 | 18 - Procedure Operati | 1969 | Riferimenti normativi catastali | anno 1969 registrato, ma il testo cita il 2010 |
+| #1157 | 19 - Provvedimenti | 2006 | Procedura trasmissione dichiarazioni variazione catastale | il testo si apre come Decreto, ma la scheda indica Provvedimento |
+| #1220 | 21 - Sanzioni | 1993 | Tardivo accatastamento di fabbricati rurali | anno 1993 registrato, ma il testo cita il 2008 |
+| #1250 | 22 - Sentenze | 2004 | Sent. 24 - Rideterminazione classamento e rendita catastale | anno 2004 registrato, ma il testo cita il 2013 |
+| #1256 | 22 - Sentenze | 1985 | Nullità di contratto di compravendita immobile | anno 1985 registrato, ma il testo cita il 2013 |
+| #1257 | 22 - Sentenze | 1968 | Ricorso contro Comune di Pavia | anno 1968 registrato, ma il testo cita il 2010 |
+| #1305 | 02 - Circolari | 2013 | Circ. 61 - Aggiornamento sistema informativo demanio maritti | il nome indica il n. 61, l'intestazione il n. 6 |
+| #1320 | 02 - Circolari | 2010 | Circ. 2 - Indicazioni per atti immobiliari con trascrizione | il nome indica il n. 2, l'intestazione il n. 22/2010 |
+| #1329 | 02 - Circolari | 2007 | Circ. 11 - Cancellazione ipoteca iscritta a garanzia di mutu | anno 2007 registrato, ma il testo cita il 2011 |
+| #1404 | 02 - Circolari | 1999 | Circ. 13 T - Definizione zone censuarie e microzone | il testo si apre come Legge n. 662, ma la scheda indica Circolare |
+| #1410 | 02 - Circolari | 1997 | Circ. 112 E - Attribuzione rendita catastale immobili | il testo si apre come Legge n. 70, ma la scheda indica Circolare |
+| #1418 | 02 - Circolari | 1994 | Circ. 1898 - Classamento discariche rifiuti solidi urbani | anno 1994 registrato, ma il testo cita il 2006 |
+| #1431 | 02 - Circolari | 1988 | Circ. 3 - Semplificazione procedure di accatastamento immobi | il testo si apre come Legge n. 68, ma la scheda indica Circolare |
+| #1432 | 02 - Circolari | 1988 | Circ. 3 - Trasferimento beni ecclesiastici | il testo si apre come Legge n. 222, ma la scheda indica Circolare |
+| #1435 | 02 - Circolari | 1988 | Circ. 3 - Apertura sale visura catasto al pubblico | anno 1988 registrato, ma il testo è datato 21 febbraio 1978 |
+| #1436 | 02 - Circolari | 1988 | Circ. 3 - Apertura sale visura catasto al pubblico | anno 1988 registrato, ma il testo è datato 21 febbraio 1978 |
+| #1437 | 02 - Circolari | 1988 | Circ. 400558 - Valutazione automatica degli immobili urbani | il testo si apre come Legge n. 70, ma la scheda indica Circolare |
+| #1441 | 02 - Circolari | 1987 | Circ. 300012 - Imposta di successione e donazione revisione  | il testo si apre come Legge n. 880, ma la scheda indica Circolare |
+| #1448 | 02 - Circolari | 1986 | Circ. 13805 - Chiarimenti sulla pubblicità immobiliare | il testo si apre come Legge n. 52, ma la scheda indica Circolare |
+| #1449 | 02 - Circolari | 1986 | Circ. 37 - Testo unico imposta di registro | il testo si apre come D.P.R. n. 131, ma la scheda indica Circolare |
+| #1461 | 02 - Circolari | 1985 | Circ. 3 - Intestazioni catastali di immobili espropriati | il nome indica il n. 3, l'intestazione il n. 5/1985 |
+| #1462 | 02 - Circolari | 1985 | Circ. 3 - Intestazioni catastali e voltura immobiliare | il nome indica il n. 3, l'intestazione il n. 5/1985 |
+| #1464 | 02 - Circolari | 1985 | Circ. 3 - Adempimenti per legge 28 febbraio 1985 numero 47 | il nome indica il n. 3, l'intestazione il n. 5/1985 |
+| #1465 | 02 - Circolari | 1985 | Circ. 3 - Adempimenti per legge 28 febbraio 1985 numero 47 | il nome indica il n. 3, l'intestazione il n. 5/1985 |
+| #1467 | 02 - Circolari | 1985 | Circ. 3 - Identificativi catastali immobiliari | il testo si apre come Legge n. 52, ma la scheda indica Circolare |
+| #1471 | 02 - Circolari | 1985 | Circ. 9095 - Modifiche alla pubblicità immobiliare | il testo si apre come Legge n. 52, ma la scheda indica Circolare |
+| #1481 | 02 - Circolari | 1982 | Circ. 86127 - Disciplina locazioni immobili urbani | il testo si apre come Legge n. 94, ma la scheda indica Circolare |
+| #1491 | 02 - Circolari | 1975 | Iscrizione aree scoperte in catasto | il testo si apre come D.P.R. n. 650, ma la scheda indica Circolare |
+| #1494 | 02 - Circolari | 1969 | Circ. 9 - Frazionamento di terreni agrari | anno 1969 registrato, ma il testo cita il 2000 |
+| #1501 | 02 - Circolari | 1941 | Circ. 134 - Quadro generale delle categorie catastali | il testo si apre come Legge, ma la scheda indica Circolare |
+| #1664 | 08 - Determinazioni | 2005 | Det. 9 - Modalità di messa a disposizione dei dati | il testo si apre come Provvedimento, ma la scheda indica Determinazione |
+| #1666 | 08 - Determinazioni | 2005 | Det. 16 - Aggiornamento del valore medio di mercato catastal | il testo si apre come Provvedimento, ma la scheda indica Determinazione |
+| #1701 | 11 - Istruzioni | 1942 | Rappresentazione cartografica dei fabbricati | anno 1942 registrato, ma il testo cita il 2010 |
+| #1756 | 16 - Modulistica | 1986 | Modelli per nota di trascrizione e iscrizione | il testo si apre come Decreto, ma la scheda indica Modulistica |
+| #1760 | 17 - Note | 2024 | Razionalizzazione tributi indiretti diversi dall'IVA | il testo si apre come Decreto legislativo n. 139, ma la scheda indica Nota |
+| #1796 | 17 - Note | 2016 | Erogazione servizi consultazione catastale telematica | anno 2016 registrato, ma il testo cita il 2024 |
+| #1811 | 17 - Note | 2015 | Sistema Informativo Catastale | anno 2015 registrato, ma il testo cita il 2019 |
+| #1814 | 17 - Note | 2014 | Nota 8089 - Prevenzione della corruzione e dell'illegalità | anno 2014 registrato, ma il testo cita il 2018 |
+| #1817 | 17 - Note | 2014 | Trasmissione telematica del titolo immobiliare | il testo si apre come Provvedimento, ma la scheda indica Nota |
+| #1818 | 17 - Note | 2013 | Modifica del saggio di interesse legale | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1825 | 17 - Note | 2012 | Parametri compensi professioni vigilate | il testo si apre come Decreto ministeriale n. 140, ma la scheda indica Nota |
+| #1835 | 17 - Note | 2010 | Nota 3 - Individuazione catastale dei beni condominiali | il nome indica il n. 3, l'intestazione il n. 5892 |
+| #1837 | 17 - Note | 2010 | Stabilizzazione finanziaria e competitività economica | il testo si apre come Decreto-legge n. 78, ma la scheda indica Nota |
+| #1846 | 17 - Note | 2009 | Nota 35890 - Acque esenti da estimo strade pubbliche | anno 2009 registrato, ma il testo è datato 7 luglio 2010 |
+| #1853 | 17 - Note | 2007 | Nota 9 - Trasferimento sede corso psicoterapia | il testo si apre come Provvedimento, ma la scheda indica Nota |
+| #1854 | 17 - Note | 2007 | Nota 6 - Azioni di salvaguardia e prevenzione | il nome indica il n. 6, l'intestazione il n. 42577 |
+| #1872 | 17 - Note | 2000 | Semplificazione adempimenti tributari immobiliari | il testo si apre come Decreto legislativo n. 9, ma la scheda indica Nota |
+| #1875 | 17 - Note | 1997 | Nota 10 - Modifica sanzioni catasto e pubblicità immobiliare | anno 1997 registrato, ma il testo cita il 2008 |
+| #1880 | 17 - Note | 1995 | Elaborazione dei servizi di pubblicità immobiliare | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1884 | 17 - Note | 1992 | Norme sul processo tributario | il testo si apre come Decreto legislativo n. 546, ma la scheda indica Nota |
+| #1887 | 17 - Note | 1988 | Coefficienti di aggiornamento dei redditi catastali | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1889 | 17 - Note | 1988 | Notificazione atti catastali per via postale | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1890 | 17 - Note | 1987 | Coefficienti di aggiornamento dei redditi catastali | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1891 | 17 - Note | 1980 | Aggiornamento redditi catastali terreni biennio 1980-81 | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1892 | 17 - Note | 1980 | Deduzioni fuori tariffa per redditi terreni | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1893 | 17 - Note | 1979 | Revisione estimi dei terreni agrari | il testo si apre come Decreto, ma la scheda indica Nota |
+| #1895 | 17 - Note | 1969 | Caratteristiche abitazioni di lusso | il testo si apre come Decreto ministeriale n. 1072, ma la scheda indica Nota; anno 1969 registrato, ma il testo cita il 2000 |
+| #1898 | 17 - Note | 1939 | Violazione norme tributarie catastali immobiliari | anno 1939 registrato, ma il testo cita il 1997 |
+| #1901 | 17 - Note | 1917 | Modifiche al servizio di voltura catastale online | anno 1917 registrato, ma il testo cita il 2026 |
+| #2466 | 00 - Sito Ade | 2005 | Articolo 65 del Decreto legislativo n82 marzo2005_art_65_dlg | anno 2005 registrato, ma il testo cita il 2012 |
+| #2480 | 00 - Sito Ade | 2010 | Circolare 2010 n. 2 - DL n. 78-2010 art. 19 comma 14 | il nome indica il n. 2, l'intestazione il n. 22/2010 |
+| #2503 | 00 - Sito Ade | 1993 | 40_bis_dlgs_385_1993 | anno 1993 registrato, ma il testo cita il 2012 |
+| #2504 | 00 - Sito Ade | 1993 | 7_quinquies_dlgs_385_1993 | anno 1993 registrato, ma il testo cita il 2012 |
+| #2539 | 00 - Sito Ade | 2006 | Articolo 2 comma 36 DL n262 03102006_art_2_dl_262_2006 | anno 2006 registrato, ma il testo cita il 2013 |
+| #2547 | 00 - Sito Ade | 1993 | Articolo 9 Dl 30121993 n557_art_9_dl_557_1993 | anno 1993 registrato, ma il testo cita il 2008 |
+| #2564 | 00 - Sito Ade | 2001 | Articolo 1 comma 2 del Decreto legislativo 30032001 n 165_ar | anno 2001 registrato, ma il testo cita il 2011 |
+| #2565 | 00 - Sito Ade | 1999 | Articolo 64 DL 300 30071999_D_Lgs_300_ 1999_art_64 | il testo si apre come Decreto legislativo n. 300, ma la scheda indica Articolo di legge; anno 1999 registrato, ma il testo cita il 2012 |
+| #2578 | 00 - Sito Ade | 1972 | Articolo 4 del DPR 26 ottobre 1972, n. 650 | anno 1972 registrato, ma il testo cita il 1996 |
