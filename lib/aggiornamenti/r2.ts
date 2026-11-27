@@ -8,9 +8,9 @@ import { AwsClient } from "aws4fetch";
  * e non rompe nulla). Ogni PDF scaricato dall'Agenzia viene copiato una volta
  * sola; l'URL/chiave restano nel DB come ripiego permanente se l'AdE sposta o
  * cancella il file. Per restare GRATIS: tetto di spazio (R2_MAX_GB, default 2,
- * mai oltre 8: il bucket ospita anche i PDF del corpus, ~1 GB, e i 10 GB
- * inclusi non vanno superati) e di scritture al mese (1 milione incluse,
- * qui al massimo 20.000).
+ * mai oltre 5: i 10 GB inclusi valgono per l'intero account, che ospita gia'
+ * i PDF del corpus e altri bucket, 2,3 GB a novembre 2026) e di scritture al
+ * mese (1 milione incluse, qui al massimo 20.000).
  *
  *   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY  token R2 "Object Read & Write"
  *   R2_BUCKET                               es. fonticatastali-docs
@@ -20,7 +20,7 @@ import { AwsClient } from "aws4fetch";
  */
 
 const GB = 1024 ** 3;
-const MAX_BYTE = Math.min(8, Math.max(0.1, Number(process.env.R2_MAX_GB || 2))) * GB;
+const MAX_BYTE = Math.min(5, Math.max(0.1, Number(process.env.R2_MAX_GB || 2))) * GB;
 const MAX_SCRITTURE_MESE = 20_000;
 
 export function r2Configurato(): boolean {

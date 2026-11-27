@@ -152,7 +152,7 @@ extra: l'API route gira già in runtime Node.
 | `AI_NEURONI_GIORNO`, `AI_NEURONI_RISERVA` | no | tetto giornaliero di neuroni (default 8.800, max 9.500) e riserva per Normie e cron (2.000) |
 | `AI_SYNC_REMOTA`, `VECTORIZE_OLTRE_QUOTA` | no | allineamento al consumo reale (default attivo) e guardiano Vectorize (default attivo) |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no | archivio dei PDF importati su R2 (vedi 4-ter); senza, l'archivio resta spento |
-| `R2_ACCOUNT_ID`, `R2_URL_PUBBLICO`, `R2_PREFISSO`, `R2_MAX_GB` | no | account (default `CF_ACCOUNT_ID`), base pubblica, cartella (`aggiornamenti`) e tetto di spazio (2 GB, max 8) |
+| `R2_ACCOUNT_ID`, `R2_URL_PUBBLICO`, `R2_PREFISSO`, `R2_MAX_GB` | no | account (default `CF_ACCOUNT_ID`), base pubblica, cartella (`aggiornamenti`) e tetto di spazio (2 GB, max 5) |
 
 - Il token **Turso** deve poter scrivere (default di `turso db tokens create`):
   servono le tabelle `aggiornamenti_*` e `studio_dossier`, create al primo uso.
@@ -219,8 +219,10 @@ Il webhook (`AGGIORNAMENTI_WEBHOOK_URL`) riceve anche `argomenti` e `dossier`.
 Il cron copia su R2 ogni PDF importato (e le scansioni in coda OCR): se
 l'Agenzia sposta o cancella il file, il documento mostra la «copia
 d'archivio». Gratis entro le quote di R2 (10 GB e 1 milione di scritture al
-mese): l'app si ferma a `R2_MAX_GB` (2 GB di default, mai oltre 8, perché il
-bucket ospita anche i PDF del corpus) e a 20.000 scritture al mese.
+mese, per l'intero account): l'app si ferma a `R2_MAX_GB` (2 GB di default,
+mai oltre 5) e a 20.000 scritture al mese. A novembre 2026 l'account occupa
+già 2,3 GB (1,46 GB di PDF del corpus e 0,84 GB di altri bucket): se gli altri
+progetti crescono, abbassa `R2_MAX_GB` di conseguenza.
 
 1. Cloudflare → **R2** → bucket esistente dei PDF (es. `fonticatastali-docs`),
    oppure **Create bucket** (gratis).
