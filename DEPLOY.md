@@ -169,14 +169,19 @@ extra: l'API route gira già in runtime Node.
   cui il contatore nasce la quota è considerata già consumata. Consumi su
   `/aggiornamenti` e `/api/risorse`. Con il permesso **Account Analytics:
   Read** sul token il contatore si allinea al consumo reale dell'account.
-- **Vectorize** (`lib/ai/vectorize.ts`, `lib/ai/indice.ts`): Workers Paid
-  include 10 M dimensioni memorizzate e 50 M interrogate al mese, e le
+- **Vectorize** (`lib/ai/vectorize.ts`, `lib/ai/indice.ts`): incluse 5 M
+  dimensioni memorizzate e 30 M interrogate al mese con Workers Free (oltre,
+  le operazioni falliscono), 10 M e 50 M con Workers Paid (oltre, si paga); le
   interrogate valgono (query + vettori memorizzati) × dimensioni. L'indice usa
-  EmbeddingGemma-2 a 256 dimensioni (154 neuroni per milione di token) con
-  tetti rigidi: **8,5 M memorizzate** (`VECTORIZE_MAX_MEMORIZZATE`) e **20 M
-  interrogate al mese** (`VECTORIZE_MAX_INTERROGATE`, contatore su Turso). Al
-  tetto, o con l'indice incompleto o da ricreare, Normie, Studio e ricerca
-  ibrida usano la ricerca testuale. Stato su `/aggiornamenti`.
+  EmbeddingGemma-2 a 128 dimensioni (154 neuroni per milione di token) con
+  tetti rigidi validi su entrambi i piani: **4,5 M memorizzate**
+  (`VECTORIZE_MAX_MEMORIZZATE`) e **20 M interrogate al mese**
+  (`VECTORIZE_MAX_INTERROGATE`, contatore su Turso). Al tetto, o con l'indice
+  incompleto o da ricreare, Normie, Studio e ricerca ibrida usano la ricerca
+  testuale. Stato su `/aggiornamenti`. Con Workers Paid si può salire a 256
+  dimensioni e 8,5 M (`CF_EMBEDDING_DIMS=256`, `VECTORIZE_MAX_MEMORIZZATE=8500000`,
+  indice da ricreare): se si alza solo il tetto, l'indicizzazione aggiunge da
+  sola i passaggi mancanti dei documenti lunghi.
 
 ### Ricostruzione di Vectorize
 
@@ -184,14 +189,14 @@ Serve solo se cambiano modello o dimensioni (l'app lo rileva e non interroga
 un indice con dimensioni diverse). Gratuita: al massimo
 `VECTORIZE_NEURONI_GIORNO` (5.000) neuroni al giorno.
 
-1. Ricrea l'indice con le dimensioni del modello (256) e i metadata index:
+1. Ricrea l'indice con le dimensioni del modello (128) e i metadata index:
 
 ```bash
 npx wrangler vectorize delete normie-catasto
 ```
 
 ```bash
-npx wrangler vectorize create normie-catasto --dimensions=256 --metric=cosine
+npx wrangler vectorize create normie-catasto --dimensions=128 --metric=cosine
 ```
 
 ```bash

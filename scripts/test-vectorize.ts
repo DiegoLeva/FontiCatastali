@@ -21,10 +21,10 @@ process.env.CF_API_TOKEN = "token-prova";
 process.env.CF_VECTORIZE_INDEX = "normie-catasto";
 process.env.AI_SEED_INSTALLAZIONE = "0";
 process.env.AI_SYNC_REMOTA = "0";
-// Tetti piccoli per provarli: 40 vettori da 256 dimensioni memorizzabili,
+// Tetti piccoli per provarli: 40 vettori da 128 dimensioni memorizzabili,
 // 1.000 "slot" di dimensioni interrogate al mese.
-process.env.VECTORIZE_MAX_MEMORIZZATE = String(40 * 256);
-process.env.VECTORIZE_MAX_INTERROGATE = String(1000 * 256);
+process.env.VECTORIZE_MAX_MEMORIZZATE = String(40 * 128);
+process.env.VECTORIZE_MAX_INTERROGATE = String(1000 * 128);
 
 let fallimenti = 0;
 const verifica = (c: unknown, m: string) => {
@@ -34,7 +34,7 @@ const verifica = (c: unknown, m: string) => {
 
 /* ------------------------------ Cloudflare simulato ------------------------------ */
 const rete = { embedding: 0, input: 0, upsert: 0, query: 0, cancellati: 0, chat: 0 };
-const indice = { dimensions: 256, extra: 0, vettori: new Map<string, number[]>() };
+const indice = { dimensions: 128, extra: 0, vettori: new Map<string, number[]>() };
 const ok = (result: unknown) => new Response(JSON.stringify({ success: true, result }), { status: 200, headers: { "content-type": "application/json" } });
 
 /** Embedding "lessicale" deterministico: parole -> 256 dimensioni normalizzate. */
@@ -119,7 +119,7 @@ async function main() {
   const cf = await import("../lib/cloudflare");
 
   console.log("\n# Modello e passaggi");
-  verifica(cf.EMBEDDING_MODEL === "@cf/google/embeddinggemma-2" && cf.EMBEDDING_DIMS === 256, `EmbeddingGemma-2 a 256 dimensioni (${cf.EMBEDDING_MODEL}, ${cf.EMBEDDING_DIMS})`);
+  verifica(cf.EMBEDDING_MODEL === "@cf/google/embeddinggemma-2" && cf.EMBEDDING_DIMS === 128, `EmbeddingGemma-2 a 128 dimensioni (${cf.EMBEDDING_MODEL}, ${cf.EMBEDDING_DIMS})`);
   const p1 = pz.spezzaInPassaggi(volture);
   verifica(p1.length >= 2 && p1.every((p) => p.lunghezza <= pz.PASSAGGIO_MAX), `passaggi entro ${pz.PASSAGGIO_MAX} caratteri (${p1.length})`);
   const ricucito = p1.map((p) => pz.ritaglio(volture, p)).join(" ").replace(/\s+/g, "");
@@ -146,7 +146,7 @@ async function main() {
   const vecchio = await ix.indicizzaDocumenti(db);
   verifica(/va ricreato/.test(vecchio.arresto ?? "") && rete.embedding === 0, `nessun embedding finché l'indice non è ricreato (${vecchio.arresto})`);
   verifica(!(await vz.prenotaQueryVectorize()) && rete.query === 0, "nessuna query sul vecchio indice");
-  indice.dimensions = 256;
+  indice.dimensions = 128;
   vz._azzeraPerTest();
 
   console.log("\n# Ricostruzione a lotti");
@@ -180,14 +180,36 @@ async function main() {
   const rimosso = await ix.indicizzaDocumenti(db);
   verifica(rimosso.rimossi === 1 && ![...indice.vettori.keys()].some((id) => id.startsWith("5-")), "documento diventato doppione: tolto dall'indice");
 
+  console.log("\n# Tetto cambiato: piano ricalcolato");
+  // Stato coerente di un indice costruito con un tetto piu' basso (10 passaggi
+  // per documento): stessi 10 vettori su Vectorize e su Turso.
+  const testo4 = String((await db.execute(`SELECT testo_estratto FROM documenti WHERE id = 4`)).rows[0].testo_estratto);
+  const tutti4 = pz.spezzaInPassaggi(testo4);
+  const tenuti = new Set(pz.selezionaPassaggi(tutti4, 10).map((p) => `4-${p.ord}`));
+  for (const id of [...indice.vettori.keys()]) if (id.startsWith("4-") && !tenuti.has(id)) indice.vettori.delete(id);
+  await db.batch([
+    { sql: `DELETE FROM passaggi WHERE doc_id = 4 AND id NOT IN (${[...tenuti].map(() => "?").join(",")})`, args: [...tenuti] },
+    `UPDATE vectorize_documenti SET vettori = 10 WHERE doc_id = 4`,
+    `UPDATE vectorize_indice SET valore = '1' WHERE chiave = 'tetto_memorizzate'`,
+    `UPDATE vectorize_indice SET valore = '10' WHERE chiave = 'k_per_doc'`,
+  ], "write");
+  const adattato = await ix.indicizzaDocumenti(db);
+  const kNuovo = Number((await db.execute(`SELECT valore FROM vectorize_indice WHERE chiave = 'k_per_doc'`)).rows[0].valore);
+  const dopo4 = Number((await db.execute(`SELECT vettori FROM vectorize_documenti WHERE doc_id = 4`)).rows[0].vettori);
+  const suVectorize4 = [...indice.vettori.keys()].filter((id) => id.startsWith("4-")).length;
+  verifica(
+    adattato.documenti === 1 && dopo4 === Math.min(tutti4.length, kNuovo) && suVectorize4 === dopo4,
+    `tetto cambiato: rifatto solo il manuale, da 10 a ${dopo4} passaggi (k = ${kNuovo}, arresto: ${adattato.arresto ?? "nessuno"})`
+  );
+
   console.log("\n# Tetti Vectorize");
   pz.invalidaRiepilogo();
   vz._azzeraPerTest();
   const sv = await vz.statoVectorize();
-  verifica(sv.consentito && sv.indice.pronto && sv.tettoMemorizzate === 40 * 256, `indice completo: ricerca semantica attiva (${sv.motivo})`);
+  verifica(sv.consentito && sv.indice.pronto && sv.tettoMemorizzate === 40 * 128, `indice completo: ricerca semantica attiva (${sv.motivo})`);
   verifica(await vz.prenotaQueryVectorize(), "query prenotata");
   const sv2 = await vz.statoVectorize();
-  verifica(sv2.queryMese === 1 && sv2.interrogateMese === (1 + sv2.vettori) * 256 && sv2.maxQueryMese === 1000 - sv2.vettori, `dimensioni interrogate del mese, conteggio prudente (${sv2.interrogateMese})`);
+  verifica(sv2.queryMese === 1 && sv2.interrogateMese === (1 + sv2.vettori) * 128 && sv2.maxQueryMese === 1000 - sv2.vettori, `dimensioni interrogate del mese, conteggio prudente (${sv2.interrogateMese})`);
   await db.execute({ sql: `UPDATE vectorize_uso SET query = ?`, args: [sv2.maxQueryMese - 1] });
   verifica(await vz.prenotaQueryVectorize(), "ultima query entro il tetto mensile");
   const qPrima = rete.query;

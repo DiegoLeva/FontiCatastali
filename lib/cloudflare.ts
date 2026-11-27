@@ -16,7 +16,7 @@
  *                       (+ Account Analytics Read: contatore allineato al consumo reale)
  *   CF_VECTORIZE_INDEX  nome dell'indice Vectorize
  *   CF_EMBEDDING_MODEL  (opz.) default @cf/google/embeddinggemma-2 (multilingue)
- *   CF_EMBEDDING_DIMS   (opz.) default 256 (Matryoshka: 128, 256, 512 o 768)
+ *   CF_EMBEDDING_DIMS   (opz.) default 128 (Matryoshka: 128, 256, 512 o 768)
  *   CF_LLM_MODEL        (opz.) default @cf/google/gemma-4-26b-a4b-it
  */
 
@@ -29,9 +29,10 @@ const REQUEST_TIMEOUT_MS = 55_000;
 
 /**
  * Embedding: EmbeddingGemma-2 (multilingue, 154 neuroni per milione di token,
- * 7 volte meno di bge-m3) troncato a 256 dimensioni (Matryoshka). Con 256
- * dimensioni l'intero corpus sta in meno di 8,5 milioni di dimensioni
- * memorizzate: dentro i 10 milioni inclusi in Workers Paid.
+ * 7 volte meno di bge-m3) troncato a 128 dimensioni (Matryoshka). Con 128
+ * dimensioni l'86% dei passaggi del corpus sta in 3,7 milioni di dimensioni
+ * memorizzate: sotto i 5 milioni del piano Workers Free e i 10 del Paid.
+ * Con 256 dimensioni nello stesso spazio ne entrerebbe meno della meta'.
  */
 export const EMBEDDING_MODEL =
   process.env.CF_EMBEDDING_MODEL || "@cf/google/embeddinggemma-2";
@@ -39,9 +40,9 @@ const DIMENSIONI_GEMMA = [128, 256, 512, 768];
 const usaGemma = () => /embeddinggemma/i.test(EMBEDDING_MODEL);
 export const EMBEDDING_DIMS = (() => {
   if (/bge-m3|qwen3-embedding|bge-large/i.test(EMBEDDING_MODEL)) return 1024;
-  const n = Number(process.env.CF_EMBEDDING_DIMS || 256);
-  if (usaGemma()) return DIMENSIONI_GEMMA.includes(n) ? n : 256;
-  return Number.isFinite(n) && n > 0 ? n : 256;
+  const n = Number(process.env.CF_EMBEDDING_DIMS || 128);
+  if (usaGemma()) return DIMENSIONI_GEMMA.includes(n) ? n : 128;
+  return Number.isFinite(n) && n > 0 ? n : 128;
 })();
 /**
  * Modello linguistico predefinito: Gemma 4 26B A4B (MoE, 4B parametri attivi).

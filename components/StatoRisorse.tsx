@@ -82,13 +82,13 @@ export function StatoRisorseSezione({ r }: { r: StatoRisorse }) {
         {v.dimensioni > 0 && (
           <>
             <p className="mt-2 text-[12.5px] text-body">
-              Dimensioni memorizzate: <span className="tabular-nums text-ink">{milioni(v.memorizzate)}</span> / 10 M incluse
-              <span className="text-mute"> · tetto dell&apos;app {milioni(v.tettoMemorizzate)} · {it(v.vettori)} passaggi × {v.dimensioni} dimensioni</span>
+              Dimensioni memorizzate: <span className="tabular-nums text-ink">{milioni(v.memorizzate)}</span> / {milioni(v.tettoMemorizzate)}
+              <span className="text-mute"> · tetto dell&apos;app (incluse: 5 M con Workers Free, 10 M con Workers Paid) · {it(v.vettori)} passaggi × {v.dimensioni} dimensioni</span>
             </p>
-            <Barra valore={v.memorizzate} massimo={10_000_000} etichetta="Dimensioni memorizzate rispetto alle 10 M incluse" />
+            <Barra valore={v.memorizzate} massimo={v.tettoMemorizzate} etichetta="Dimensioni memorizzate rispetto al tetto" />
             <p className="mt-2 text-[12.5px] text-body">
               Dimensioni interrogate questo mese: <span className="tabular-nums text-ink">{milioni(v.interrogateMese)}</span> / {milioni(v.tettoInterrogate)}
-              <span className="text-mute"> · tetto dell&apos;app, 50 M incluse · {it(v.queryMese)} query{v.bloccateMese ? ` · ${it(v.bloccateMese)} passate alla ricerca testuale` : ""}</span>
+              <span className="text-mute"> · tetto dell&apos;app (incluse: 30 M Free, 50 M Paid) · {it(v.queryMese)} query{v.bloccateMese ? ` · ${it(v.bloccateMese)} passate alla ricerca testuale` : ""}</span>
             </p>
             <Barra valore={v.interrogateMese} massimo={v.tettoInterrogate} etichetta="Dimensioni interrogate nel mese rispetto al tetto" />
             <p className="mt-2 text-[12.5px] text-mute">

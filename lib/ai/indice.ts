@@ -38,7 +38,7 @@ import { haMetadati } from "@/lib/metadati/bonifica";
  *     massimo VECTORIZE_NEURONI_GIORNO (5.000) al giorno per l'indicizzazione,
  *     sempre dentro il tetto globale di 8.800 di lib/ai/budget.ts;
  *   - dimensioni memorizzate: la prima costruzione usa al massimo l'82% del
- *     tetto di 8,5 milioni (circa 7 milioni): il resto resta agli atti futuri;
+ *     tetto (4,5 milioni di default: circa 3,7): il resto resta agli atti futuri;
  *     i manuali lunghissimi entrano con un numero limitato di passaggi
  *     distribuiti sul testo (il resto e' comunque trovabile con la ricerca
  *     testuale). Mai oltre il tetto.
@@ -148,12 +148,15 @@ export interface StatoRicostruzione {
 export async function statoRicostruzione(db: Client): Promise<StatoRicostruzione> {
   await assicuraSchemaIndice(db);
   const elenco = await ammissibili(db);
-  const fatti = await db.execute(`SELECT doc_id, caratteri, vettori FROM vectorize_documenti`);
-  const perDoc = new Map(fatti.rows.map((r) => [Number(r.doc_id), Number(r.caratteri)]));
-  const mancanti = elenco.filter((e) => perDoc.get(e.id) !== e.caratteri);
+  const fatti = await db.execute(`SELECT doc_id, caratteri, vettori, totali FROM vectorize_documenti`);
+  const perDoc = new Map(fatti.rows.map((r) => [Number(r.doc_id), { caratteri: Number(r.caratteri), vettori: Number(r.vettori), totali: Number(r.totali) }]));
   const p = calcolaPiano(elenco);
   const kSalvato = await leggiKv(db, "k_per_doc");
-  const k = kSalvato === null ? p.kPerDocumento : Number(kSalvato);
+  const k = kSalvato === null || (await leggiKv(db, "tetto_memorizzate")) !== String(TETTO_MEMORIZZATE) ? p.kPerDocumento : Number(kSalvato);
+  const mancanti = elenco.filter((e) => {
+    const d = perDoc.get(e.id);
+    return !d || d.caratteri !== e.caratteri || d.vettori !== attesi(d.totali, k);
+  });
   const neuroniStimati = mancanti.reduce((s, e) => {
     const n = stimaPassaggi(e.caratteri);
     const usati = k ? Math.min(n, k) : n;
@@ -198,6 +201,8 @@ export interface OpzioniIndice {
 }
 
 const arrotonda = (v: number[]) => v.map((x) => Math.round(x * 1e6) / 1e6);
+/** Vettori attesi per un documento di `totali` passaggi con tetto `k` (0 = nessuno). */
+const attesi = (totali: number, k: number) => (k ? Math.min(totali, k) : totali);
 
 /** Indicizza i documenti mancanti o cambiati. Mai un'eccezione: esito leggibile. */
 export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): Promise<EsitoIndice> {
@@ -225,18 +230,22 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
 
     const elenco = await ammissibili(db);
     const ammessi = new Set(elenco.map((e) => e.id));
+    // Piano stabile finche' non cambia il tetto: se lo si alza (o abbassa) il
+    // numero di passaggi per documento si ricalcola e si aggiustano solo i
+    // documenti con un numero di vettori diverso da quello atteso.
     let kSalvato = await leggiKv(db, "k_per_doc");
-    if (kSalvato === null) {
+    if (kSalvato === null || (await leggiKv(db, "tetto_memorizzate")) !== String(TETTO_MEMORIZZATE)) {
       const piano = calcolaPiano(elenco);
       kSalvato = String(piano.kPerDocumento);
       await scriviKv(db, "k_per_doc", kSalvato);
+      await scriviKv(db, "tetto_memorizzate", String(TETTO_MEMORIZZATE));
       await scriviKv(db, "piano", JSON.stringify({ ...piano, calcolatoIl: new Date().toISOString() }));
     }
     const k = Number(kSalvato) || 0;
 
     // Documenti spariti dal corpus o diventati doppioni: fuori dall'indice.
-    const fatti = await db.execute(`SELECT doc_id, caratteri, vettori FROM vectorize_documenti`);
-    const perDoc = new Map(fatti.rows.map((r) => [Number(r.doc_id), { caratteri: Number(r.caratteri), vettori: Number(r.vettori) }]));
+    const fatti = await db.execute(`SELECT doc_id, caratteri, vettori, totali FROM vectorize_documenti`);
+    const perDoc = new Map(fatti.rows.map((r) => [Number(r.doc_id), { caratteri: Number(r.caratteri), vettori: Number(r.vettori), totali: Number(r.totali) }]));
     const daRimuovere = [...perDoc.keys()].filter((id) => !ammessi.has(id));
     if (daRimuovere.length) {
       const ids = await db.execute({ sql: `SELECT id FROM passaggi WHERE doc_id IN (${daRimuovere.map(() => "?").join(",")})`, args: daRimuovere });
@@ -252,7 +261,11 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
       esito.rimossi = daRimuovere.length;
     }
 
-    let daFare = elenco.filter((e) => perDoc.get(e.id)?.caratteri !== e.caratteri);
+    const daRifare = (e: Ammissibile) => {
+      const d = perDoc.get(e.id);
+      return !d || d.caratteri !== e.caratteri || d.vettori !== attesi(d.totali, k);
+    };
+    let daFare = elenco.filter(daRifare);
     if (opz.soloIds?.length) {
       const solo = new Set(opz.soloIds);
       daFare = daFare.filter((e) => solo.has(e.id));
@@ -285,7 +298,9 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
         if (!doc) continue;
         const testo = String(doc.testo ?? "");
         const titolo = String(doc.titolo ?? "");
-        const scelti: Passaggio[] = selezionaPassaggi(spezzaInPassaggi(testo), k);
+        const tutti = spezzaInPassaggi(testo);
+        const tuttiPassaggi = tutti.length;
+        const scelti: Passaggio[] = selezionaPassaggi(tutti, k);
         if (!scelti.length) continue;
         const testi = scelti.map((p) => ritaglio(testo, p));
 
@@ -339,10 +354,10 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
           }
           scritture.push({
             sql: `INSERT OR REPLACE INTO vectorize_documenti (doc_id, vettori, totali, caratteri, modello, dimensioni, indicizzato_il) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            args: [e.id, scelti.length, spezzaInPassaggi(testo).length, e.caratteri, EMBEDDING_MODEL, EMBEDDING_DIMS, new Date().toISOString()],
+            args: [e.id, scelti.length, tuttiPassaggi, e.caratteri, EMBEDDING_MODEL, EMBEDDING_DIMS, new Date().toISOString()],
           });
           await db.batch(scritture, "write");
-          perDoc.set(e.id, { caratteri: e.caratteri, vettori: scelti.length });
+          perDoc.set(e.id, { caratteri: e.caratteri, vettori: scelti.length, totali: tuttiPassaggi });
           esito.documenti++;
           esito.vettori += scelti.length;
           impegnati -= stima;
@@ -362,7 +377,7 @@ export async function indicizzaDocumenti(db: Client, opz: OpzioniIndice = {}): P
 
     esito.neuroni = Math.round(tetto.usati * 100) / 100;
     if (tetto.usati > 0) await scriviKv(db, `neuroni:${giorno}`, String(Math.round((spesiOggi + tetto.usati) * 100) / 100));
-    const residui = elenco.filter((e) => perDoc.get(e.id)?.caratteri !== e.caratteri).length;
+    const residui = elenco.filter(daRifare).length;
     esito.residui = residui;
     if (residui === 0) {
       esito.completata = true;

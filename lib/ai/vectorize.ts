@@ -6,13 +6,14 @@ import { riepilogoIndice } from "@/lib/ai/passaggi";
 /**
  * Guardiano delle quote Vectorize (obiettivo: 0 € extra).
  *
- * Workers Paid include ogni mese 10 milioni di dimensioni MEMORIZZATE e 50
- * milioni di dimensioni INTERROGATE, e per Cloudflare le interrogate valgono
- * (query del mese + vettori memorizzati) × dimensioni. L'app resta molto sotto:
+ * Quote incluse: Workers Free 5 milioni di dimensioni MEMORIZZATE e 30
+ * milioni INTERROGATE al mese (oltre, le operazioni falliscono); Workers Paid
+ * 10 e 50 milioni (oltre, si paga). Per Cloudflare le interrogate valgono
+ * (query del mese + vettori memorizzati) × dimensioni. L'app resta sotto le
+ * quote di ENTRAMBI i piani:
  *
- *   - memorizzate: tetto rigido di 8,5 milioni (VECTORIZE_MAX_MEMORIZZATE),
- *     1,5 milioni di margine sotto i 10 inclusi; un upsert che lo supererebbe
- *     non parte;
+ *   - memorizzate: tetto rigido di 4,5 milioni (VECTORIZE_MAX_MEMORIZZATE, mai
+ *     oltre 9); un upsert che lo supererebbe non parte;
  *   - interrogate: contatore mensile su Turso con tetto rigido di 20 milioni
  *     (VECTORIZE_MAX_INTERROGATE), calcolato nel modo piu' prudente
  *     ((query + vettori) × dimensioni, come se ogni giorno avesse query); al
@@ -32,9 +33,9 @@ const intero = (v: string | undefined, def: number, min: number, max: number) =>
   const n = Number(v);
   return Number.isFinite(n) && v !== undefined && v !== "" ? Math.min(max, Math.max(min, Math.round(n))) : def;
 };
-/** Tetto rigido delle dimensioni memorizzate (mai oltre 9 milioni). */
-export const TETTO_MEMORIZZATE = intero(process.env.VECTORIZE_MAX_MEMORIZZATE, 8_500_000, 0, 9_000_000);
-/** Tetto rigido mensile delle dimensioni interrogate (mai oltre 45 milioni). */
+/** Tetto rigido delle dimensioni memorizzate (default 4,5 M: sotto i 5 M del piano Free). */
+export const TETTO_MEMORIZZATE = intero(process.env.VECTORIZE_MAX_MEMORIZZATE, 4_500_000, 0, 9_000_000);
+/** Tetto rigido mensile delle dimensioni interrogate (default 20 M: sotto i 30 M del Free). */
 export const TETTO_INTERROGATE = intero(process.env.VECTORIZE_MAX_INTERROGATE, 20_000_000, 0, 45_000_000);
 const CACHE_INFO_MS = 30 * 60_000;
 
@@ -230,7 +231,7 @@ export async function spazioPerNuoviVettori(n: number, vettoriNoti = 0): Promise
   if (dopo > TETTO_MEMORIZZATE) {
     return {
       ok: false,
-      motivo: `con altri ${n} passaggi l'indice supererebbe il tetto di ${TETTO_MEMORIZZATE / 1e6} milioni di dimensioni memorizzate (incluse: ${INCLUSE_MEMORIZZATE / 1e6} milioni)`,
+      motivo: `con altri ${n} passaggi l'indice supererebbe il tetto di ${TETTO_MEMORIZZATE / 1e6} milioni di dimensioni memorizzate`,
     };
   }
   return { ok: true, motivo: "" };
