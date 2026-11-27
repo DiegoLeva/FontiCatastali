@@ -21,6 +21,8 @@ import { Timeline } from "./Timeline";
 import { IndiceFonti } from "./IndiceFonti";
 import { Progresso, type StatoFase } from "./Progresso";
 import { dossierMarkdown } from "./esporta";
+import { ConfrontoDate } from "./ConfrontoDate";
+import { Ripasso } from "./Ripasso";
 import { SeguiArgomento } from "@/components/watchlist/SeguiArgomento";
 
 const SUGGERITI = [
@@ -76,6 +78,8 @@ export function StudioApp() {
   const [tocAperto, setTocAperto] = useState(false);
   const [sezioneAttiva, setSezioneAttiva] = useState<string>("");
   const [copiato, setCopiato] = useState(false);
+  const [esportando, setEsportando] = useState(false);
+  const [vista, setVista] = useState<"dossier" | "confronto" | "ripasso">("dossier");
 
   const abortRef = useRef<AbortController | null>(null);
   const origineRef = useRef<HTMLElement | null>(null);
@@ -359,12 +363,33 @@ export function StudioApp() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  async function esportaWord() {
+    if (!dossier) return;
+    setEsportando(true);
+    try {
+      // La libreria docx si carica solo qui: nessun peso in piu' per la pagina.
+      const { dossierDocx } = await import("@/lib/studio/docx");
+      const blob = await dossierDocx(dossier, window.location.origin);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `studio-${slug(dossier.argomento) || "dossier"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (err) {
+      console.error("[studio] esportazione Word non riuscita:", err);
+    } finally {
+      setEsportando(false);
+    }
+  }
   function vaiA(id: string) {
     setTocAperto(false);
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   function nuovo() {
     abortRef.current?.abort();
+    setVista("dossier");
     setStato("idle");
     setDossier(null);
     setSezioni([]);
@@ -473,6 +498,7 @@ export function StudioApp() {
           <SeguiArgomento argomento={argomento} compatto />
           <AzioneBtn onClick={copiaMd} disabled={!dossier}>{copiato ? "Copiato ✓" : "Copia Markdown"}</AzioneBtn>
           <AzioneBtn onClick={scaricaMd} disabled={!dossier}>Scarica .md</AzioneBtn>
+          <AzioneBtn onClick={() => void esportaWord()} disabled={!dossier || esportando}>{esportando ? "Preparo il Word…" : "Esporta Word (.docx)"}</AzioneBtn>
           <AzioneBtn onClick={() => window.print()} disabled={!dossier}>Stampa / PDF</AzioneBtn>
           <AzioneBtn onClick={() => void avvia(argomento, true)} disabled={inCorso} primario>
             {inCorso ? "Generazione…" : "Rigenera"}
@@ -535,8 +561,43 @@ export function StudioApp() {
         <Riepilogo statistiche={statistiche} concetti={concetti} dossier={dossier} />
       )}
 
+      {/* Strumenti di studio sul dossier pronto (0 neuroni). */}
+      {dossier && (
+        <div role="tablist" aria-label="Viste del dossier" className="mt-5 flex flex-wrap gap-2 print:hidden">
+          {(
+            [
+              ["dossier", "Dossier"],
+              ["confronto", "Confronto tra date"],
+              ["ripasso", "Ripasso"],
+            ] as const
+          ).map(([id, etichetta]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={vista === id}
+              onClick={() => setVista(id)}
+              className={`rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition ${
+                vista === id ? "border-ink bg-ink text-canvas" : "border-hairline bg-canvas text-body hover:border-hairline-strong"
+              }`}
+            >
+              {etichetta}
+            </button>
+          ))}
+        </div>
+      )}
+      {dossier && vista === "confronto" && (
+        <div className="mt-5 print:hidden">
+          <ConfrontoDate dossier={dossier} onApri={apri} />
+        </div>
+      )}
+      {dossier && vista === "ripasso" && (
+        <div className="mx-auto mt-5 max-w-2xl print:hidden">
+          <Ripasso dossier={dossier} />
+        </div>
+      )}
+
       {/* Indice dei capitoli su mobile */}
-      {haContenuto && (
+      {haContenuto && vista === "dossier" && (
         <div className="sticky top-0 z-30 -mx-4 mt-4 border-b border-hairline bg-canvas-soft/95 px-4 py-2 backdrop-blur lg:hidden print:hidden">
           <button onClick={() => setTocAperto((v) => !v)} aria-expanded={tocAperto} className="flex w-full items-center justify-between text-[13px] font-medium text-ink">
             Indice del dossier
@@ -553,7 +614,7 @@ export function StudioApp() {
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-[200px_minmax(0,1fr)_300px]">
+      <div className={`mt-6 grid-cols-1 gap-8 lg:grid-cols-[200px_minmax(0,1fr)_300px] ${vista === "dossier" ? "grid" : "hidden print:grid"}`}>
         {/* Indice dei capitoli (desktop) */}
         <nav aria-label="Indice del dossier" className="hidden lg:block print:hidden">
           <div className="sticky top-6">
