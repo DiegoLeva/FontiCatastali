@@ -145,11 +145,12 @@ extra: l'API route gira già in runtime Node.
 
 | Variabile | Obbligatoria | A cosa serve |
 |-----------|--------------|--------------|
-| `CRON_SECRET` | **sì** per il cron | autentica il cron del lunedì (`openssl rand -hex 32`) |
+| `CRON_SECRET` | **sì** per i cron | autentica il cron del lunedì e quello giornaliero (`openssl rand -hex 32`) |
 | `AGGIORNAMENTI_WEBHOOK_URL` | no | notifica Slack/Discord/Teams di novità ed errori |
 | `CF_STUDIO_MAP_MODEL`, `CF_STUDIO_WRITE_MODEL` | no | modelli dello Studio (default `CF_LLM_MODEL` = Gemma 4 26B A4B) |
 | `STUDIO_MAX_PER_IP`, `STUDIO_MAX_GIORNO`, `STUDIO_NEURONI_DOSSIER` | no | limiti dei dossier (default 4/10 min per IP, 4 nuovi al giorno, 2.500 neuroni l'uno) |
 | `AI_NEURONI_GIORNO`, `AI_NEURONI_RISERVA` | no | tetto giornaliero di neuroni (default 8.800, max 9.500) e riserva per Normie e cron (2.000) |
+| `RICERCA_SOGLIA_SEMANTICA` | no | somiglianza minima dei risultati «per significato» della ricerca ibrida (default 0,35) |
 | `AI_SYNC_REMOTA`, `VECTORIZE_OLTRE_QUOTA` | no | allineamento al consumo reale (default attivo) e guardiano Vectorize (default attivo) |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no | archivio dei PDF importati su R2 (vedi 4-ter); senza, l'archivio resta spento |
 | `R2_ACCOUNT_ID`, `R2_URL_PUBBLICO`, `R2_PREFISSO`, `R2_MAX_GB` | no | account (default `CF_ACCOUNT_ID`), base pubblica, cartella (`aggiornamenti`) e tetto di spazio (2 GB, max 5) |
@@ -182,6 +183,29 @@ extra: l'API route gira già in runtime Node.
   dimensioni e 8,5 M (`CF_EMBEDDING_DIMS=256`, `VECTORIZE_MAX_MEMORIZZATE=8500000`,
   indice da ricreare): se si alza solo il tetto, l'indicizzazione aggiunge da
   sola i passaggi mancanti dei documenti lunghi.
+- **Cron giornaliero** (`/api/cron/giornaliero`, 03:17 UTC, zero neuroni per
+  le fonti): legge il feed ufficiale della Gazzetta Ufficiale, Serie Generale
+  (`https://www.gazzettaufficiale.it/rss/SG`), tiene solo gli atti con termini
+  catastali stretti (catasto, censuario, volture, Docfa, Pregeo, rendita
+  catastale, pubblicità immobiliare, OMI…), scarica il testo dell'atto, lo
+  riverifica con la stessa pertinenza e la stessa deduplica del cron del
+  lunedì (estremi, URL, oggetto, registro) e lo importa con titolo
+  dall'oggetto ufficiale. Poi normalizza i metadati, avvisa gli argomenti
+  seguiti e riprende l'indicizzazione semantica. Ultimo controllo su
+  `/aggiornamenti`. Prova a secco su un'anteprima:
+  `/api/cron/giornaliero?prova=1`.
+- **Ricerca ibrida** (home): unisce testo e significato con Reciprocal Rank
+  Fusion, da sola per le domande discorsive e per tutte le ricerche con
+  l'interruttore «Ibrida» acceso (un embedding della query, ~0,003 neuroni, e
+  una query Vectorize contata nel tetto mensile). Codici ed estremi esatti
+  (`F/3`, `Circ. 2/2016`, `D.P.R. 1142/1949`, testo tra virgolette) e la
+  ricerca esatta restano sempre testuali: 0 neuroni e 0 interrogazioni. Ai
+  tetti, con l'indice incompleto o oltre 30 ricerche ibride al minuto per IP,
+  si torna in silenzio alla ricerca testuale.
+- **Studio**: «Esporta Word (.docx)» (copertina, sommario, capitoli,
+  cronologia, bibliografia con estremi e link), «Confronto tra date» e
+  «Ripasso» (flashcard e quiz) lavorano sul dossier già generato, nel
+  browser: 0 neuroni.
 
 ### Ricostruzione di Vectorize
 
@@ -207,14 +231,15 @@ npx wrangler vectorize create-metadata-index normie-catasto --property-name=anno
 npx wrangler vectorize create-metadata-index normie-catasto --property-name=cartella --type=string
 ```
 
-2. L'indicizzazione parte da sola ogni notte (`/api/cron/indicizza`, 03:17
+2. L'indicizzazione parte da sola ogni notte (`/api/cron/giornaliero`, 03:17
    UTC) e riprende dal punto in cui si era fermata; per accelerarla:
    `GET /api/manutenzione/vectorize?azione=esegui` (con `Authorization: Bearer
    <CRON_SECRET>`), stato con `?azione=stato`.
 - `vercel.json` dichiara `"fluid": true`: con Fluid Compute le funzioni lunghe
   (cron e Studio, `maxDuration = 300`) sono ammesse anche sul piano Hobby.
 - Verifica: Vercel → Project → Settings → **Cron Jobs** deve mostrare
-  `/api/cron/aggiorna-normativa` con schedule `0 5 * * 1`; da lì il pulsante
+  `/api/cron/aggiorna-normativa` con schedule `0 5 * * 1` e
+  `/api/cron/giornaliero` con schedule `17 3 * * *`; da lì il pulsante
   **Run** avvia un'esecuzione manuale. Esito su `/aggiornamenti`.
 
 ---
@@ -297,6 +322,30 @@ npm run ocr:locale
 Lo script scarica i PDF (dalla copia su R2 se c'è), estrae il testo con
 tesseract (italiano), applica la stessa pertinenza e deduplica del cron e li
 importa nel corpus con titolo e metadati normalizzati. Zero neuroni.
+
+### Archivi storici dell'Agenzia (recupero una tantum)
+
+Gli archivi dell'Agenzia delle Entrate (circolari dal 2006, risoluzioni,
+provvedimenti) e dell'ex Agenzia del Territorio (circolari 2001-2012,
+risoluzioni) sono pagine HTML per anno e per mese: niente browser, niente API
+a pagamento. Dal tuo PC, con `TURSO_DATABASE_URL` e un `TURSO_AUTH_TOKEN` che
+può scrivere in `.env.local`:
+
+```bash
+npm run importa:storico-ade -- --prova
+```
+
+```bash
+npm run importa:storico-ade
+```
+
+Opzioni: `--fonte territorio-circolari` (oppure `circolari`, `risoluzioni`,
+`provvedimenti`, `territorio-risoluzioni`), `--da 2010 --a 2015`,
+`--limite 50`. Una richiesta al secondo; stessa pertinenza catastale sul
+titolo e sul testo del PDF, stessa deduplica rigorosa sul corpus e sul
+registro del cron, titolo dall'oggetto ufficiale, nessuna chiamata AI.
+Idempotente: si può interrompere e rilanciare. I nuovi atti entrano
+nell'indice semantico con il cron giornaliero, entro il budget gratuito.
 
 ---
 
