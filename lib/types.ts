@@ -10,6 +10,8 @@ export interface FileHit {
   url: string; // link al PDF (bucket o /docs)
   /** Snippet gia' sanificato: HTML sicuro contenente solo <mark>. */
   snippetHtml: string;
+  /** Trovato solo dalla ricerca per significato (ricerca ibrida). */
+  perSignificato?: boolean;
 }
 
 /** Livello 2 — cartella con conteggio. */
@@ -94,5 +96,11 @@ export interface SearchResponse {
   total: number;
   tookMs: number;
   groups: FolderGroup[];
+  /** Modalita' effettiva: "ibrida" solo se il canale semantico ha risposto. */
+  modo?: "testuale" | "ibrida";
+  /** Documenti aggiunti dalla ricerca per significato. */
+  semantici?: number;
+  /** Avviso per l'utente (es. ricerca per significato non disponibile). */
+  nota?: string;
   error?: string;
 }

@@ -13,7 +13,7 @@ export function ExactToggle({ value, onChange }: Props) {
   const aiutoId = useId();
 
   return (
-    <div className="mt-3 flex flex-col items-center">
+    <div className="flex flex-col items-center">
       <div className="flex items-center gap-2.5">
         {/* L'intera etichetta e' cliccabile: su touch lo switch da solo e' piccolo. */}
         <button

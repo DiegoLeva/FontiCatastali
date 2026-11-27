@@ -14,6 +14,7 @@ import { ResultsSkeleton } from "./Skeletons";
 import { MeshGradient } from "./MeshGradient";
 import { Logo } from "./Logo";
 import { ExactToggle } from "./ExactToggle";
+import { HybridToggle } from "./HybridToggle";
 import { BrowseTree } from "./BrowseTree";
 import { BrowseSwitch, type BrowseMode } from "./BrowseSwitch";
 import { TopicMap } from "./TopicMap";
@@ -31,12 +32,35 @@ export function SearchApp() {
   const [errorMsg, setErrorMsg] = useState("");
   const [activeDecades, setActiveDecades] = useState<string[]>([]);
   const [exact, setExact] = useState(false);
+  const [ibrida, setIbrida] = useState(false);
   const [browseMode, setBrowseMode] = useState<BrowseMode>("cartelle");
 
   const debounced = useDebouncedValue(query, 250);
   const abortRef = useRef<AbortController | null>(null);
 
-  const runSearch = useCallback(async (q: string, exactMode: boolean) => {
+  // Preferenza "ricerca ibrida" ricordata in questo browser.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("fc:ricerca-ibrida") === "1") setIbrida(true);
+    } catch {
+      /* archiviazione non disponibile */
+    }
+  }, []);
+  const cambiaIbrida = useCallback((v: boolean) => {
+    setIbrida(v);
+    if (v) setExact(false);
+    try {
+      localStorage.setItem("fc:ricerca-ibrida", v ? "1" : "0");
+    } catch {
+      /* archiviazione non disponibile */
+    }
+  }, []);
+  const cambiaEsatta = useCallback((v: boolean) => {
+    setExact(v);
+    if (v) setIbrida(false);
+  }, []);
+
+  const runSearch = useCallback(async (q: string, exactMode: boolean, ibridaMode = false) => {
     const term = q.trim();
     abortRef.current?.abort();
 
@@ -54,7 +78,7 @@ export function SearchApp() {
 
     try {
       const url = `/api/search?q=${encodeURIComponent(term)}${
-        exactMode ? "&exact=1" : ""
+        exactMode ? "&exact=1" : ibridaMode ? "&modo=ibrida" : ""
       }`;
       const res = await fetch(url, { signal: controller.signal });
       const json = (await res.json()) as SearchResponse;
@@ -69,10 +93,10 @@ export function SearchApp() {
     }
   }, []);
 
-  // Ricerca as-you-type (debounced); ri-parte anche al cambio di "esatta".
+  // Ricerca as-you-type (debounced); ri-parte anche al cambio di modalita'.
   useEffect(() => {
-    runSearch(debounced, exact);
-  }, [debounced, exact, runSearch]);
+    runSearch(debounced, exact, ibrida);
+  }, [debounced, exact, ibrida, runSearch]);
 
   // Azzera i filtri ad ogni nuovo set di risultati.
   useEffect(() => {
@@ -139,7 +163,7 @@ export function SearchApp() {
             <SearchBar
               value={query}
               onChange={setQuery}
-              onSubmit={() => runSearch(query, exact)}
+              onSubmit={() => runSearch(query, exact, ibrida)}
               onClear={() => {
                 setQuery("");
                 setData(null);
@@ -148,7 +172,10 @@ export function SearchApp() {
               loading={status === "loading"}
               autoFocus
             />
-            <ExactToggle value={exact} onChange={setExact} />
+            <div className="mt-3 flex flex-wrap items-start justify-center gap-x-4 gap-y-1">
+              <ExactToggle value={exact} onChange={cambiaEsatta} />
+              <HybridToggle value={ibrida} onChange={cambiaIbrida} />
+            </div>
           </div>
         </div>
       </header>
@@ -169,7 +196,7 @@ export function SearchApp() {
           >
             {errorMsg}
             <button
-              onClick={() => runSearch(query, exact)}
+              onClick={() => runSearch(query, exact, ibrida)}
               className="mt-3 block w-full text-sm font-medium underline underline-offset-4"
             >
               Riprova
@@ -218,6 +245,13 @@ export function SearchApp() {
             aria-busy={refreshing}
             className={`transition-opacity duration-150 ${refreshing ? "opacity-55" : "opacity-100"}`}
           >
+            {data && (data.modo === "ibrida" || data.nota) && (
+              <p className="mb-3 rounded-ds border border-hairline bg-canvas-soft px-3.5 py-2 text-[12.5px] leading-relaxed text-body" role="status">
+                {data.modo === "ibrida"
+                  ? `Ricerca ibrida: testo e significato insieme${data.semantici ? ` · ${data.semantici} ${data.semantici === 1 ? "documento trovato" : "documenti trovati"} solo per significato` : ""}.`
+                  : data.nota}
+              </p>
+            )}
             <FilterBar
               decades={decades}
               active={activeDecades}

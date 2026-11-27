@@ -11,7 +11,7 @@ import type { RetrievedChunk } from "@/lib/normie";
  * ricerca vettoriale e' sospesa per restare nelle quote gratuite.
  */
 
-const STOP_DOMANDA = new Set(
+export const STOP_DOMANDA = new Set(
   ("quale quali quando dove cosa chi perche posso puo possono devo deve devono serve servono occorre bisogna fare " +
     "fatto cos sia siano essere stato stata stati ho hai ha hanno abbiamo avere mio mia miei mie suo sua suoi loro " +
     "questo questa questi queste quello quella quelli ogni tutto tutti tutte anche ancora gia molto poco meno caso casi " +

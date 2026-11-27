@@ -9,7 +9,11 @@ import {
   MARK_END,
 } from "@/lib/fts";
 import { docUrl, fmtAnno } from "@/lib/docs";
-import { CACHE_CDN_BREVE, NO_STORE } from "@/lib/http";
+import { CACHE_CDN_BREVE, NO_STORE, clientIp } from "@/lib/http";
+import { rateLimit } from "@/lib/ratelimit";
+import { cercaPerSignificato, decidiModo, documentiSemantici, eDiscorsiva, fondiRrf, SOGLIA_SEMANTICA } from "@/lib/ricerca-ibrida";
+import { paroleSignificative } from "@/lib/studio/espansione";
+import { STOP_DOMANDA } from "@/lib/normie-testuale";
 import type { FileHit, FolderGroup, SearchResponse } from "@/lib/types";
 
 // @libsql/client richiede il runtime Node (non Edge).
@@ -78,6 +82,37 @@ const conMeta = (sql: string, meta: boolean) =>
     ? sql.replace("/*META_JOIN*/", "LEFT JOIN documenti_meta m ON m.doc_id = d.id").replace("/*META_WHERE*/", "AND m.duplicato_di IS NULL")
     : sql.replace("/*META_JOIN*/", "").replace("/*META_WHERE*/", "");
 
+/** Domanda discorsiva: solo le parole significative, a prefisso corto ("accatas*"). */
+function matchDiscorsivo(q: string): string {
+  const parole = paroleSignificative(q, STOP_DOMANDA)
+    .map((t) => t.normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[^a-z0-9]/g, ""))
+    .filter((t) => t.length >= 3)
+    .slice(0, 8);
+  return parole.map((t) => `${/\d/.test(t) ? t : t.slice(0, 7)}*`).join(" ");
+}
+
+/**
+ * Codici di categoria catastale (F/3, D/1, A/10): il tokenizer li spezza in
+ * "f" e "3", che da soli non bastano a una ricerca. Si cercano come frase
+ * ("f 3") e poi si verifica il codice sul testo: "lettera f) 3." non e' la
+ * categoria F/3, e "D/10" non e' "D/1".
+ */
+const RE_CATEGORIA = /(?<![\p{L}\d])([a-f])\s*\/\s*0?(\d{1,2})(?!\d)/giu;
+function matchCategorie(q: string): { match: string; verifiche: RegExp[] } | null {
+  const codici = [...q.matchAll(RE_CATEGORIA)];
+  if (!codici.length) return null;
+  const resto = buildMatchQuery(q.replace(RE_CATEGORIA, " "));
+  const frasi = codici.map((m) => `"${m[1].toLowerCase()} ${Number(m[2])}"`);
+  return {
+    match: [...frasi, resto].filter(Boolean).join(" "),
+    verifiche: codici.map((m) => new RegExp(`(?<![\\p{L}\\d])${m[1]}\\s*\\/\\s*0?${Number(m[2])}(?!\\d)`, "iu")),
+  };
+}
+const senzaMarcatori = (s: string) => s.replace(/[\uE000\uE001]/g, "");
+
+/** Ricerche ibride per IP al minuto (ognuna e' una query Vectorize). */
+const IBRIDE_PER_MINUTO = 30;
+
 function rowToHit(row: Record<string, unknown>, snippetHtml: string): FileHit {
   const cartella = String(row.cartella ?? "");
   const nomeFile = String(row.nomeFile ?? "");
@@ -116,9 +151,13 @@ export async function GET(
 ): Promise<NextResponse<SearchResponse>> {
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0, MAX_QUERY_LEN);
   const exact = req.nextUrl.searchParams.get("exact") === "1";
+  const ibridaChiesta = req.nextUrl.searchParams.get("modo") === "ibrida";
+  const deciso = decidiModo(q, { ibrida: ibridaChiesta, exact });
 
   // In modalita' FTS servono almeno 2 caratteri utili; in esatta almeno 3.
-  const match = exact ? q : buildMatchQuery(q);
+  const discorsiva = deciso.modo === "ibrida" && eDiscorsiva(q);
+  const categorie = exact ? null : matchCategorie(q);
+  const match = exact ? q : categorie?.match || (discorsiva && matchDiscorsivo(q)) || buildMatchQuery(q);
   if (!q || (!exact && !match) || (exact && q.length < MIN_EXACT_LEN)) {
     return vuota(q);
   }
@@ -135,9 +174,46 @@ export async function GET(
       );
     } else {
       const rs = await db.execute({ sql: conMeta(FTS_SQL, await haMetadati(db)), args: [match, match] });
-      hits = rs.rows.map((row) =>
+      const righe = categorie
+        ? rs.rows.filter((row) => {
+            const testo = `${row.titolo ?? ""} ${senzaMarcatori(String(row.snip ?? ""))}`;
+            return categorie.verifiche.every((re) => re.test(testo));
+          })
+        : rs.rows;
+      hits = righe.map((row) =>
         rowToHit(row, snippetToSafeHtml(String(row.snip ?? "")))
       );
+    }
+
+    // Ricerca ibrida: testuale + per significato, fuse con RRF. Se il canale
+    // semantico non e' disponibile (tetti, indice incompleto, errori) restano
+    // i risultati testuali, senza errori.
+    let modo: SearchResponse["modo"] = exact ? undefined : "testuale";
+    let semantici = 0;
+    let nota: string | undefined;
+    if (deciso.modo === "ibrida") {
+      const rl = rateLimit(`ibrida:${clientIp(req)}`, IBRIDE_PER_MINUTO, 60_000);
+      const sem = rl.ok ? await cercaPerSignificato(q) : null;
+      if (!sem) {
+        if (ibridaChiesta) nota = "Ricerca per significato non disponibile in questo momento: risultati della ricerca testuale.";
+      } else {
+        modo = "ibrida";
+        const perId = new Map(hits.map((h) => [h.id, h]));
+        const vicini = [...sem.entries()]
+          .filter(([, v]) => v.score >= SOGLIA_SEMANTICA)
+          .sort((a, b) => b[1].score - a[1].score)
+          .map(([id]) => id);
+        const nuovi = vicini.filter((id) => !perId.has(id)).slice(0, 40);
+        for (const d of await documentiSemantici(db, nuovi, sem, q)) {
+          perId.set(d.id, { ...rowToHit(d as unknown as Record<string, unknown>, d.snippetHtml), perSignificato: true });
+          semantici++;
+        }
+        hits = fondiRrf([hits.map((h) => h.id), vicini.filter((id) => perId.has(id))])
+          .map((o) => perId.get(o.id)!)
+          .slice(0, MAX_RESULTS);
+      }
+    } else if (ibridaChiesta && !exact) {
+      nota = `Codice o estremi esatti: ricerca testuale (${deciso.motivo}).`;
     }
 
     return NextResponse.json(
@@ -146,6 +222,9 @@ export async function GET(
         total: hits.length,
         tookMs: Date.now() - t0,
         groups: groupByFolder(hits),
+        ...(modo ? { modo } : {}),
+        ...(semantici ? { semantici } : {}),
+        ...(nota ? { nota } : {}),
       },
       // La stessa query restituisce lo stesso risultato finche' il corpus non
       // cambia: la CDN risponde alle ricerche ripetute senza toccare Turso.
